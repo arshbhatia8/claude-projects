@@ -1,5 +1,5 @@
 // Assets & Investments, Bank Accounts & Cash, Liabilities, Savings & Goals.
-import { app, actions, esc, icon, money, moneyText, pct, fmtDate, monthLabel, emptyState, toast, ask, $, refTypeLabel, sheet } from './dom.js';
+import { app, actions, esc, icon, money, moneyText, pct, fmtDate, monthLabel, emptyState, toast, ask, $, refTypeLabel, sheet, periodControl } from './dom.js';
 import { donut, donutLegend, colorAt } from './charts.js';
 import { periodSummary, insights, daysBetween, shiftMonth } from '../core/ledger.js';
 import { ASSET_TYPES, ASSET_STATUS, ACCOUNT_TYPES, LIABILITY_TYPES, GOAL_KINDS } from '../core/defaults.js';
@@ -9,7 +9,7 @@ const S = () => app.store;
 const kv = (label, valueHtml) => (valueHtml ? `<div><span>${esc(label)}</span><b>${valueHtml}</b></div>` : '');
 const stat = (label, valueHtml, sub = '', cls = '') => `<article class="stat"><span class="stat-label">${esc(label)}</span><span class="stat-value ${cls}">${valueHtml}</span>${sub ? `<span class="stat-sub">${sub}</span>` : ''}</article>`;
 const archivedToggle = (count) =>
-  count ? `<button class="btn btn-ghost btn-sm" data-act="toggle-archived">${app.state.showArchived ? 'Hide' : 'Show'} archived (${count})</button>` : '';
+  count ? `<button class="link-btn" data-act="toggle-archived">${app.state.showArchived ? 'Hide' : 'Show'} archived (${count})</button>` : '';
 actions['toggle-archived'] = () => { app.state.showArchived = !app.state.showArchived; app.render(); };
 
 // ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ export const assets = {
     return `
       <div class="page-head">
         <div><h1>Assets & Investments</h1><p class="muted">Maintained by you — no live prices, brokers or bank links.</p></div>
-        <div class="page-actions">${archivedToggle(t.assets.filter((a) => a.archived).length)}<button class="btn btn-primary" data-act="add-asset">${icon('plus')}Add asset</button></div>
+        <div class="page-actions">${archivedToggle(t.assets.filter((a) => a.archived).length)}<button class="btn btn-primary" data-act="add-asset">${icon('plus')}<span class="lbl">Add asset</span></button></div>
       </div>
       <div class="stats" style="margin-bottom:14px">
         ${stat('Total investments', money(t.investments), 'Current recorded values', 'inv')}
@@ -142,8 +142,8 @@ export const accounts = {
     const list = t.accounts.filter((a) => app.state.showArchived || !a.archived);
     return `
       <div class="page-head">
-        <div><h1>Bank Accounts & Cash</h1><p class="muted">Balances = opening balance + your transactions, or your latest manual adjustment.</p></div>
-        <div class="page-actions">${archivedToggle(t.accounts.filter((a) => a.archived).length)}<button class="btn btn-ghost" data-act="new-transfer">${icon('transfer')}Transfer</button><button class="btn btn-primary" data-act="add-account">${icon('plus')}Add account</button></div>
+        <div><h1>Bank Accounts & Cash</h1><p class="muted">Opening balance + your transactions, or your latest adjustment.</p></div>
+        <div class="page-actions">${archivedToggle(t.accounts.filter((a) => a.archived).length)}<button class="btn btn-ghost" data-act="new-transfer" aria-label="Transfer between accounts">${icon('transfer')}<span class="lbl">Transfer</span></button><button class="btn btn-primary" data-act="add-account">${icon('plus')}<span class="lbl">Add</span></button></div>
       </div>
       <div class="stats" style="margin-bottom:14px">${stat('Total liquid balance', money(t.liquid), 'Includes other assets marked liquid')}${stat('Accounts', String(t.accounts.filter((a) => !a.archived).length))}</div>
       ${list.length ? `<div class="items">${list.map((a) => `
@@ -214,7 +214,7 @@ export const liabilities = {
     return `
       <div class="page-head">
         <div><h1>Liabilities</h1><p class="muted">Credit cards, loans and other money you owe.</p></div>
-        <div class="page-actions">${archivedToggle(t.liabilities.filter((l) => l.archived).length)}<button class="btn btn-primary" data-act="add-liability">${icon('plus')}Add liability</button></div>
+        <div class="page-actions">${archivedToggle(t.liabilities.filter((l) => l.archived).length)}<button class="btn btn-primary" data-act="add-liability">${icon('plus')}<span class="lbl">Add</span></button></div>
       </div>
       <div class="notice" style="margin-bottom:14px">${icon('card')}<div>Record card purchases as <b>Expenses paid from the card</b> — they count as spending once, when you buy. Paying the bill is a <b>Transfer</b> from your bank to the card: cash and the amount owed both go down, and nothing is counted as spending again.</div></div>
       <div class="stats" style="margin-bottom:14px">${stat('Total liabilities', money(t.totalLiabilities), 'Included in net worth', 'lia')}</div>
@@ -269,11 +269,8 @@ export const goals = {
     const tips = insights(db, month, store.today(), t);
     return `
       <div class="page-head">
-        <div><h1>Savings & Goals</h1><p class="muted">${esc(monthLabel(month))}</p></div>
-        <div class="page-actions">
-          <div class="period"><button class="icon-btn sm" data-act="month-step" data-step="-1" aria-label="Previous month">${icon('left')}</button><span class="small" style="padding:0 8px;font-weight:700">${esc(monthLabel(month))}</span><button class="icon-btn sm" data-act="month-step" data-step="1" aria-label="Next month">${icon('right')}</button></div>
-          <button class="btn btn-primary" data-act="add-goal">${icon('plus')}New goal</button>
-        </div>
+        <div><h1>Savings & Goals</h1></div>
+        ${periodControl()}
       </div>
       <section class="section">
         <h3>This month</h3>
@@ -299,7 +296,7 @@ export const goals = {
         </div>
       </section>
       <section class="section">
-        <div class="section-head"><h2>Goals</h2></div>
+        <div class="section-head"><h2>Goals</h2><button class="btn btn-primary btn-sm" data-act="add-goal">${icon('plus')}New goal</button></div>
         ${list.length ? `<div class="items">${list.map((g) => {
           const p = g.target ? Math.min(100, (g.current / g.target) * 100) : 0;
           return `<article class="item">

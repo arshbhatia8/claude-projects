@@ -1,7 +1,7 @@
 // Dashboard, Transactions, Quick Add, Reports.
 import {
   app, actions, esc, icon, money, moneyText, pct, fmtDate, relDate, monthLabel, categoryName, categoryIcon, refName, TYPE_ICON,
-  emptyState, toast, ask, download, $, isRevealed, endpointOptions, parseRef,
+  emptyState, toast, ask, download, $, isRevealed, endpointOptions, parseRef, periodControl, sheet,
 } from './dom.js';
 import { barChart, lineChart, donut, donutLegend, colorAt } from './charts.js';
 import { periodSummary, monthsEnding, monthlySeries, shiftMonth, insights, pnlFor, indexById, reversibleAmount } from '../core/ledger.js';
@@ -30,27 +30,10 @@ export function txRow(tx, { showDate = true } = {}) {
 
 const sortTx = (list) => [...list].sort((a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1) : (a.time || '') !== (b.time || '') ? ((a.time || '') < (b.time || '') ? 1 : -1) : a.createdAt < b.createdAt ? 1 : -1));
 
-function periodPicker(id) {
-  return `<div class="period" role="group" aria-label="Month">
-    <button class="icon-btn sm" data-act="month-step" data-step="-1" aria-label="Previous month">${icon('left')}</button>
-    <input type="month" id="${id}" value="${esc(app.state.month)}" aria-label="Month and year" />
-    <button class="icon-btn sm" data-act="month-step" data-step="1" aria-label="Next month">${icon('right')}</button>
-  </div>`;
-}
-
 actions['month-step'] = (el) => {
   app.state.month = shiftMonth(app.state.month, Number(el.dataset.step));
   app.render();
 };
-
-function bindMonthInput(root, id) {
-  $(`#${id}`, root)?.addEventListener('change', (e) => {
-    if (/^\d{4}-\d{2}$/.test(e.target.value)) {
-      app.state.month = e.target.value;
-      app.render();
-    }
-  });
-}
 
 const stat = (label, valueHtml, sub = '', ic = '', cls = '') =>
   `<article class="stat"><span class="stat-label">${ic ? icon(ic) : ''}${esc(label)}</span><span class="stat-value ${cls}">${valueHtml}</span>${sub ? `<span class="stat-sub">${sub}</span>` : ''}</article>`;
@@ -79,6 +62,15 @@ function greeting() {
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
 }
 
+/** Months shown in trend charts: 6 on phones keeps labels readable, 12 elsewhere. */
+export const trendLength = () => (window.innerWidth < 600 ? 6 : 12);
+
+function favouriteTemplates(db, limit = 10) {
+  const pinned = db.templates.filter((t) => t.pinned);
+  const frequent = db.templates.filter((t) => !t.pinned && t.useCount > 0).sort((a, b) => b.useCount - a.useCount);
+  return [...pinned.sort((a, b) => (b.useCount || 0) - (a.useCount || 0)), ...frequent].slice(0, limit);
+}
+
 export const dashboard = {
   title: 'My Finance',
   render() {
@@ -88,19 +80,19 @@ export const dashboard = {
     const t = store.totals();
     const s = periodSummary(db, month);
     const isEmpty = !db.transactions.length && !db.accounts.length && !db.assets.length && !db.liabilities.length;
-    const pinned = db.templates.filter((x) => x.pinned).slice(0, 8);
-    const recent = sortTx(db.transactions).slice(0, 6);
+    const favs = favouriteTemplates(db);
+    const recent = sortTx(db.transactions).slice(0, 5);
     const tips = insights(db, month, store.today(), t);
     const revealed = isRevealed();
+    const short = monthLabel(month, true);
 
     const welcome = isEmpty ? `
-      <article class="card section" style="margin-bottom:18px">
+      <article class="card section">
         <h2>Welcome to Spendly</h2>
-        <p class="muted">Start with what you already have. Everything is entered by you and stays on this device.</p>
-        <div class="row">
+        <p class="muted small">Start with what you already have. Everything is entered by you and stays on this device.</p>
+        <div class="menu-list">
           <a class="btn btn-primary" href="#accounts">${icon('bank')}Add a bank account</a>
           <a class="btn btn-ghost" href="#quick">${icon('zap')}Set up Quick Add</a>
-          <a class="btn btn-ghost" href="#gmail">${icon('mail')}Connect Gmail</a>
           <button class="btn btn-ghost" data-act="demo-load">${icon('spark')}Try with demo data</button>
         </div>
       </article>` : '';
@@ -108,35 +100,41 @@ export const dashboard = {
     return `
       <div class="page-head">
         <div><p class="eyebrow">${esc(greeting())}</p><h1>My Finance</h1></div>
-        ${periodPicker('dash-month')}
+        ${periodControl()}
       </div>
+      ${store.hasDemoData() ? `<div class="notice warn section">${icon('alert')}<div>Demo data is loaded. Remove it in Settings → Data.</div></div>` : ''}
+      ${backupReminder()}
       ${welcome}
-      ${store.hasDemoData() ? `<div class="notice warn" style="margin-bottom:14px">${icon('alert')}<div>Demo data is loaded (records marked “demo”). Remove it any time in Settings → Data.</div></div>` : ''}
       <section class="hero fade-in" aria-label="Net worth">
         <div class="hero-label">Total Net Worth
           <button class="icon-btn" data-act="toggle-privacy" aria-pressed="${revealed}" aria-label="${revealed ? 'Hide amounts' : 'Show amounts'}">${icon(revealed ? 'eye' : 'eye-off')}</button>
         </div>
         <div class="hero-value">${money(t.netWorth)}</div>
         <div class="hero-pills">
-          <div class="hero-pill"><span class="dot in">${icon('in')}</span><span style="min-width:0"><small>Income credited · ${esc(monthLabel(month, true))}</small><b>${money(s.income)}</b></span></div>
-          <div class="hero-pill"><span class="dot out">${icon('out')}</span><span style="min-width:0"><small>Expenses debited · ${esc(monthLabel(month, true))}</small><b>${money(s.expenses)}</b></span></div>
+          <div class="hero-pill"><span class="dot in">${icon('in')}</span><span style="min-width:0"><small>Income · ${esc(short)}</small><b>${money(s.income)}</b></span></div>
+          <div class="hero-pill"><span class="dot out">${icon('out')}</span><span style="min-width:0"><small>Expenses · ${esc(short)}</small><b>${money(s.expenses)}</b></span></div>
         </div>
+        <div class="hero-foot"><span>Net cash flow</span>${money(s.net, { sign: true })}<span class="spacer"></span><span>${s.savingsRate === null ? 'No income yet' : `Saved ${pct(s.savingsRate)}`}</span></div>
       </section>
 
-      <div class="stats" style="margin:14px 0 18px">
-        ${stat('Total liquid balance', money(t.liquid), 'Bank, cash & wallets', 'wallet')}
-        ${stat('Net cash flow', money(s.net, { sign: true }), s.savingsRate === null ? 'No income this month' : `Savings rate ${pct(s.savingsRate)}`, 'transfer', s.net >= 0 ? 'pos' : 'neg')}
-        ${stat('Total investments', money(t.investments), 'Recorded values', 'trend', 'inv')}
-        ${stat('Total assets', money(t.totalAssets), 'Liquid + investments + other', 'pie')}
-        ${stat('Total liabilities', money(t.totalLiabilities), 'Cards & loans outstanding', 'card', 'lia')}
+      <div class="actions-row" style="margin:12px 0">
+        <a class="action-tile" href="#quick">${icon('zap')}Quick Add</a>
+        <button class="action-tile" data-act="new-tx">${icon('plus')}Transaction</button>
+        <button class="action-tile" data-act="add-asset">${icon('pie')}Add asset</button>
       </div>
 
-      <section class="section">
-        <div class="section-head"><h2>Quick Add</h2><a class="btn btn-ghost btn-sm" href="#quick">${icon('zap')}All templates</a></div>
-        ${pinned.length
-          ? `<div class="quick-strip">${pinned.map((tp) => `<button class="chip" data-act="tpl-use" data-id="${esc(tp.id)}">${icon(categoryIcon(categoryName(tp.categoryId) || tp.name))}${esc(tp.name)}</button>`).join('')}<a class="chip" href="#quick">${icon('plus')}More</a></div>`
-          : `<div class="quick-strip"><a class="chip" href="#quick">${icon('plus')}Pin your everyday expenses (e.g. Breakfast – Dosa) for one-tap entry</a></div>`}
+      <section class="section" aria-label="Favourite templates">
+        ${favs.length
+          ? `<div class="quick-strip fav-strip">${favs.map((tp) => `<button class="chip" data-act="tpl-use" data-id="${esc(tp.id)}">${icon(categoryIcon(categoryName(tp.categoryId) || tp.name))}${esc(tp.name)}</button>`).join('')}<a class="chip" href="#quick">${icon('more')}All</a></div>`
+          : `<a class="chip" href="#quick" style="width:100%;justify-content:center">${icon('pin')}Pin everyday buys like Breakfast – Dosa for one-tap entry</a>`}
       </section>
+
+      <div class="stats section">
+        ${stat('Liquid balance', money(t.liquid), 'Bank, cash & wallets', 'wallet')}
+        ${stat('Investments', money(t.investments), 'Recorded values', 'trend', 'inv')}
+        ${stat('Total assets', money(t.totalAssets), 'Everything you own', 'pie')}
+        ${stat('Liabilities', money(t.totalLiabilities), 'Cards & loans', 'card', 'lia')}
+      </div>
 
       <div class="dash-grid">
         <article class="card w-8">
@@ -152,43 +150,43 @@ export const dashboard = {
           ${categoryBars(s.expenseByCategory.filter((r) => r.total > 0), s.expenses)}
         </article>
         <article class="card w-6">
+          <div class="section-head"><h2>Recent</h2><a class="small" href="#transactions">See all →</a></div>
+          ${recent.length ? `<ul class="tx-list">${recent.map((tx) => txRow(tx)).join('')}</ul>` : emptyState('list', 'No transactions yet', 'Use Quick Add to record your first one.', `<a class="btn btn-primary btn-sm" href="#quick">${icon('zap')}Quick Add</a>`)}
+        </article>
+        <article class="card w-6">
           <div class="section-head"><h2>Portfolio allocation</h2><a class="small" href="#assets">Assets →</a></div>
           <div id="alloc"></div>
         </article>
         <article class="card w-6">
-          <div class="section-head"><h2>Monthly net cash flow</h2><span class="muted small">Income − expenses</span></div>
+          <div class="section-head"><h2>Net cash flow by month</h2></div>
           <div class="chart" id="ch-net"></div>
         </article>
-        <article class="card w-6">
+        <article class="card w-12">
           <div class="section-head"><h2>Assets vs liabilities</h2></div>
           <div class="vs">
             <div class="vs-bar" role="img" aria-label="Assets compared with liabilities"><div style="flex:${Math.max(t.totalAssets, 0)}"></div><div style="flex:${Math.max(t.totalLiabilities, 0)}"></div></div>
-            <div class="row small"><span><i class="legend" style="display:inline-block;width:9px;height:9px;border-radius:3px;background:var(--accent)"></i> Assets ${money(t.totalAssets)}</span><span class="spacer"></span><span><i style="display:inline-block;width:9px;height:9px;border-radius:3px;background:var(--liability)"></i> Liabilities ${money(t.totalLiabilities)}</span></div>
+            <div class="row small"><span><i style="display:inline-block;width:9px;height:9px;border-radius:3px;background:var(--accent)"></i> Assets ${money(t.totalAssets)}</span><span class="spacer"></span><span><i style="display:inline-block;width:9px;height:9px;border-radius:3px;background:var(--liability)"></i> Liabilities ${money(t.totalLiabilities)}</span></div>
           </div>
           <h3 style="margin-top:16px">Net worth trend</h3>
-          <div class="chart" id="ch-nw" style="min-height:140px"></div>
-        </article>
-        <article class="card w-12">
-          <div class="section-head"><h2>Recent transactions</h2><a class="small" href="#transactions">See all →</a></div>
-          ${recent.length ? `<ul class="tx-list">${recent.map((tx) => txRow(tx)).join('')}</ul>` : emptyState('list', 'No transactions yet', 'Use Quick Add or Add transaction to record your first one.', `<a class="btn btn-primary btn-sm" href="#quick">${icon('zap')}Quick Add</a>`)}
+          <div class="chart" id="ch-nw" style="min-height:120px"></div>
         </article>
       </div>`;
   },
   after(root) {
     const db = S().db;
-    bindMonthInput(root, 'dash-month');
-    const months = monthsEnding(app.state.month, 12);
+    const n = trendLength();
+    const months = monthsEnding(app.state.month, n);
     const series = monthlySeries(db, months);
     const labels = months.map((m) => monthLabel(m, true));
     const any = series.some((m) => m.transactionCount);
     const ie = $('#ch-ie', root);
-    if (any) barChart(ie, { labels, highlight: 11, series: [
+    if (any) barChart(ie, { labels, highlight: n - 1, series: [
       { label: 'Income', color: 'var(--income)', values: series.map((m) => m.income) },
       { label: 'Expenses', color: 'var(--expense)', values: series.map((m) => m.expenses) },
     ] });
     else ie.innerHTML = emptyState('chart', 'No history yet', 'Bars appear for months that have transactions.');
     const net = $('#ch-net', root);
-    if (any) lineChart(net, { labels, highlight: 11, series: [{ label: 'Net cash flow', color: 'var(--accent)', area: true, values: series.map((m) => (m.transactionCount ? m.net : null)) }] });
+    if (any) lineChart(net, { labels, highlight: n - 1, series: [{ label: 'Net cash flow', color: 'var(--accent)', area: true, values: series.map((m) => (m.transactionCount ? m.net : null)) }] });
     else net.innerHTML = emptyState('transfer', 'No cash flow yet', 'Shows income minus expenses for each month with data.');
     const t = S().totals();
     const items = allocationItems(t);
@@ -203,6 +201,17 @@ export const dashboard = {
     else nw.innerHTML = `<p class="muted small">Spendly saves a net-worth snapshot each month you use it. The trend appears once two months are recorded — earlier months are never estimated.</p>`;
   },
 };
+
+/** Shown when there is data worth protecting and no recent backup. */
+export function backupReminder() {
+  const db = S().db;
+  const hasData = db.transactions.some((t) => !t.sample) || db.accounts.some((a) => !a.sample) || db.assets.some((a) => !a.sample);
+  if (!hasData) return '';
+  const last = db.settings.lastBackupAt;
+  const days = last ? Math.floor((Date.now() - Date.parse(last)) / 864e5) : null;
+  if (days !== null && days < 7) return '';
+  return `<div class="notice warn section backup-banner">${icon('download')}<div>${last ? `Last backup ${days} days ago.` : 'No backup yet.'} Your data lives only in this browser — keep an encrypted copy.</div><button class="btn btn-ghost btn-sm" data-act="backup">Back up</button></div>`;
+}
 
 // ---------------------------------------------------------------------------
 // Transactions
@@ -279,9 +288,8 @@ export const transactions = {
       <div class="page-head">
         <div><h1>Transactions</h1><p class="muted">${list.length} shown</p></div>
         <div class="page-actions">
-          <button class="btn btn-ghost" data-act="tx-export">${icon('download')}Export CSV</button>
-          <a class="btn btn-ghost" href="#quick">${icon('zap')}Quick Add</a>
-          <button class="btn btn-primary" data-act="new-tx">${icon('plus')}Add transaction</button>
+          <button class="btn btn-ghost" data-act="tx-export" aria-label="Export CSV">${icon('download')}<span class="lbl">Export CSV</span></button>
+          <button class="btn btn-primary" data-act="new-tx">${icon('plus')}<span class="lbl">Add</span></button>
         </div>
       </div>
       <form class="filters card" id="tx-filters" style="margin-bottom:14px" onsubmit="return false">
@@ -326,11 +334,11 @@ export const transactions = {
   },
 };
 
-actions['tx-export'] = () => {
+actions['tx-export'] = async () => {
   const store = S();
   const list = filterTransactions(store.db, app.state.txFilter, store.today());
-  download(`spendly-transactions-${store.today()}.csv`, transactionsToCsv(store.db, list), 'text/csv');
-  toast(`Exported ${list.length} transactions`);
+  const r = await download(`spendly-transactions-${store.today()}.csv`, transactionsToCsv(store.db, list), 'text/csv');
+  if (r !== 'cancelled') toast(`Exported ${list.length} transactions`);
 };
 actions['new-tx'] = () => openTxForm({ values: { date: S().today() } });
 actions['tx-open'] = (el) => openTxDetail(el.dataset.id);
@@ -377,16 +385,13 @@ actions['tx-delete'] = async (el) => {
 function templateTile(tp) {
   const cat = categoryName(tp.categoryId);
   const amount = tp.amount ? moneyText(tp.amount) : 'Enter amount';
-  return `<div class="tpl-cell" style="position:relative">
+  return `<div class="tpl-cell">
     <button class="tpl" data-act="tpl-use" data-id="${esc(tp.id)}" aria-label="${esc(`Use ${tp.name}`)}">
-      <span class="tx-ico t-${tp.type}">${icon(cat ? categoryIcon(cat || tp.name) : TYPE_ICON[tp.type])}</span>
-      <span class="tpl-name">${esc(tp.name)}</span>
+      <span class="tpl-top"><span class="tx-ico t-${tp.type}">${icon(cat ? categoryIcon(cat || tp.name) : TYPE_ICON[tp.type])}</span></span>
+      <span class="tpl-name">${tp.pinned ? icon('pin', 'tpl-pin') : ''}${esc(tp.name)}</span>
       <span class="tpl-amt">${esc(amount)}${cat ? ` · ${esc(cat)}` : ''}</span>
     </button>
-    <span class="tpl-tools">
-      <button class="icon-btn" data-act="tpl-pin" data-id="${esc(tp.id)}" aria-pressed="${tp.pinned}" aria-label="${tp.pinned ? 'Unpin' : 'Pin'} ${esc(tp.name)}" title="${tp.pinned ? 'Unpin' : 'Pin'}">${icon('pin')}</button>
-      <button class="icon-btn" data-act="tpl-edit" data-id="${esc(tp.id)}" aria-label="Edit ${esc(tp.name)}" title="Edit">${icon('edit')}</button>
-    </span>
+    <span class="tpl-tools"><button class="tpl-menu" data-act="tpl-menu" data-id="${esc(tp.id)}" aria-label="Options for ${esc(tp.name)}">${icon('more')}</button></span>
   </div>`;
 }
 
@@ -437,10 +442,10 @@ export const quick = {
     const recentTx = sortTx(db.transactions.filter((t) => t.type !== 'reversal')).slice(0, 5);
     return `
       <div class="page-head">
-        <div><h1>Quick Add</h1><p class="muted">Tap a template, check the amount, save.</p></div>
+        <div><h1>Quick Add</h1><p class="muted">Tap, check the amount, save.</p></div>
         <div class="page-actions">
-          <button class="btn btn-ghost" data-act="new-template">${icon('plus')}New template</button>
-          <button class="btn btn-primary" data-act="new-tx">${icon('edit')}Manual transaction</button>
+          <button class="btn btn-ghost" data-act="new-template" aria-label="New template">${icon('plus')}<span class="lbl">New template</span></button>
+          <button class="btn btn-primary" data-act="new-tx">${icon('edit')}<span class="lbl">Manual</span></button>
         </div>
       </div>
       ${all.length ? `
@@ -468,9 +473,33 @@ export const quick = {
 actions['quick-cat'] = (el) => { app.state.quick.categoryId = el.dataset.id; app.render(); };
 actions['new-template'] = () => openTemplateForm();
 actions['tpl-edit'] = (el) => openTemplateForm(S().db.templates.find((t) => t.id === el.dataset.id));
+actions['tpl-menu'] = (el) => {
+  const tp = S().db.templates.find((t) => t.id === el.dataset.id);
+  if (!tp) return;
+  const id = esc(tp.id);
+  sheet.open({
+    title: tp.name,
+    html: `<div class="menu-list">
+      <button class="btn btn-primary" data-act="tpl-use" data-id="${id}">${icon('zap')}Use now</button>
+      <button class="btn btn-ghost" data-act="tpl-pin" data-id="${id}">${icon('pin')}${tp.pinned ? 'Unpin from favourites' : 'Pin to favourites'}</button>
+      <button class="btn btn-ghost" data-act="tpl-edit" data-id="${id}">${icon('edit')}Edit template</button>
+      <button class="btn btn-danger" data-act="tpl-delete" data-id="${id}">${icon('trash')}Delete template</button>
+      <p class="tiny muted">Used ${tp.useCount || 0} time${tp.useCount === 1 ? '' : 's'}. Editing or deleting a template never changes transactions already saved.</p>
+    </div>`,
+  });
+};
+actions['tpl-delete'] = async (el) => {
+  const tp = S().db.templates.find((t) => t.id === el.dataset.id);
+  if (!(await ask({ title: 'Delete template?', message: `“${tp.name}” will be removed from Quick Add. Transactions you already recorded with it stay as they are.`, confirmText: 'Delete', danger: true }))) return;
+  await S().deleteTemplate(tp.id);
+  sheet.close();
+  toast('Template deleted');
+  app.render();
+};
 actions['tpl-pin'] = async (el) => {
   const t = S().db.templates.find((x) => x.id === el.dataset.id);
   await S().setTemplatePinned(t.id, !t.pinned);
+  sheet.close();
   toast(t.pinned ? `Unpinned ${t.name}` : `Pinned ${t.name}`);
   app.render();
 };
@@ -534,8 +563,7 @@ export const reports = {
         <div><h1>Reports & Analytics</h1><p class="muted">Every figure comes from your saved records.</p></div>
         <div class="page-actions">
           <select id="report-year" aria-label="Year" style="width:auto">${years.map((y) => `<option ${y === year ? 'selected' : ''}>${y}</option>`).join('')}</select>
-          <button class="btn btn-ghost" data-act="export-year" data-year="${esc(year)}">${icon('download')}${esc(year)} CSV</button>
-          <button class="btn btn-ghost" data-act="export-assets">${icon('download')}Assets CSV</button>
+          <button class="btn btn-ghost" data-act="export-year" data-year="${esc(year)}" aria-label="Export ${esc(year)} transactions as CSV">${icon('download')}<span class="lbl">${esc(year)} CSV</span></button>
         </div>
       </div>
       <div class="stats" style="margin-bottom:18px">
@@ -549,7 +577,7 @@ export const reports = {
         <article class="card w-6"><div class="section-head"><h2>Monthly net cash flow</h2></div><div class="chart" id="r-net"></div></article>
         <article class="card w-6"><div class="section-head"><h2>Savings-rate trend</h2><span class="muted small">Months with income only</span></div><div class="chart" id="r-rate"></div></article>
         <article class="card w-12">
-          <div class="section-head"><h2>Month-on-month · ${esc(monthLabel(month))} vs ${esc(monthLabel(shiftMonth(month, -1)))}</h2>${periodPicker('rep-month')}</div>
+          <div class="section-head"><h2>Month-on-month · ${esc(monthLabel(month))} vs ${esc(monthLabel(shiftMonth(month, -1)))}</h2>${periodControl()}</div>
           ${catIds.length ? `<div class="table-wrap"><table><thead><tr><th>Category</th><th class="r">${esc(monthLabel(shiftMonth(month, -1), true))}</th><th class="r">${esc(monthLabel(month, true))}</th><th class="r">Change</th></tr></thead><tbody>
             ${catIds.map((id) => `<tr><td>${esc(categoryName(id))}</td><td class="r">${money(val(prev, id))}</td><td class="r">${money(val(cur, id))}</td><td class="r">${esc(change(val(cur, id), val(prev, id)))}</td></tr>`).join('')}
             <tr><td><b>Total expenses</b></td><td class="r"><b>${money(prev.expenses)}</b></td><td class="r"><b>${money(cur.expenses)}</b></td><td class="r"><b>${esc(change(cur.expenses, prev.expenses))}</b></td></tr>
@@ -578,7 +606,6 @@ export const reports = {
     const db = S().db;
     const year = app.state.reportYear || S().today().slice(0, 4);
     $('#report-year', root).addEventListener('change', (e) => { app.state.reportYear = e.target.value; app.render(); });
-    bindMonthInput(root, 'rep-month');
     const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`);
     const ms = monthlySeries(db, months);
     const labels = months.map((m) => monthLabel(m, true));
@@ -614,16 +641,16 @@ export const reports = {
   },
 };
 
-actions['export-year'] = (el) => {
+actions['export-year'] = async (el) => {
   const store = S();
   const list = filterTransactions(store.db, { period: 'year', year: el.dataset.year, sort: 'date-asc' }, store.today());
-  download(`spendly-${el.dataset.year}.csv`, transactionsToCsv(store.db, list), 'text/csv');
-  toast(`Exported ${list.length} transactions`);
+  const r = await download(`spendly-${el.dataset.year}.csv`, transactionsToCsv(store.db, list), 'text/csv');
+  if (r !== 'cancelled') toast(`Exported ${list.length} transactions`);
 };
-actions['export-assets'] = () => {
+actions['export-assets'] = async () => {
   const store = S();
-  download(`spendly-assets-${store.today()}.csv`, assetsToCsv(store.totals()), 'text/csv');
-  toast('Assets exported');
+  const r = await download(`spendly-assets-${store.today()}.csv`, assetsToCsv(store.totals()), 'text/csv');
+  if (r !== 'cancelled') toast('Assets exported');
 };
 
 export { formatINR, toInputValue };

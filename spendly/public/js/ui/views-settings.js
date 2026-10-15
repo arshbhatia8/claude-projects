@@ -1,5 +1,5 @@
 // Gmail Imports and Settings.
-import { app, actions, esc, icon, money, fmtDate, emptyState, toast, ask, sheet, $, $$, refName, categoryName, readForm, submitting, download } from './dom.js';
+import { app, actions, esc, icon, money, fmtDate, emptyState, toast, ask, sheet, $, $$, refName, categoryName, readForm, submitting, download, IS_IOS } from './dom.js';
 import { possibleDuplicate } from '../core/duplicates.js';
 import { DATE_FORMATS, TX_TYPES } from '../core/defaults.js';
 import * as gmail from '../core/gmail.js';
@@ -112,6 +112,7 @@ export const gmailView = {
       ${shown.length ? `<div class="items">${shown.map((c) => candidateCard(c, db)).join('')}</div>` : `<div class="card">${emptyState('mail', tab === 'pending' ? 'Nothing waiting for review' : 'Nothing here', connected ? 'Press Sync now to look for new transaction emails.' : 'Connect Gmail to start finding transaction alerts.')}</div>`}`;
   },
   after(root) {
+    if (!EMBEDDED) gmail.preload();
     $('#sync-days', root)?.addEventListener('change', (e) => { app.state.syncDays = e.target.value; });
     $('#gm-filter-form', root)?.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -125,8 +126,10 @@ export const gmailView = {
       btn.disabled = true;
       try {
         const clientId = e.target.elements.clientId.value.trim();
+        if (!/^[\w.-]+\.apps\.googleusercontent\.com$/.test(clientId)) throw new Error('A Google client ID ends in .apps.googleusercontent.com');
+        const pending = gmail.connect(clientId); // opens Google's popup straight from this tap
         await S().setGmail({ clientId });
-        const email = await gmail.connect(clientId);
+        const email = await pending;
         await S().setGmail({ email, lastError: null });
         toast(`Gmail connected (read-only): ${email}`);
         app.render();
@@ -215,8 +218,29 @@ export const settings = {
     const s = store.db.settings;
     const tzs = TIMEZONES.includes(s.timezone) ? TIMEZONES : [s.timezone, ...TIMEZONES];
     return `
-      <div class="page-head"><div><h1>Settings</h1><p class="muted">Spendly is single-user and keeps everything encrypted on this device.</p></div></div>
+      <div class="page-head"><div><h1>Settings</h1><p class="muted">Single-user, encrypted, stays on this device.</p></div></div>
       <div class="grid grid-2">
+        <article class="card form span-2" id="data-card">
+          <h2>Data, backup & export</h2>
+          <p class="small muted">Your data lives only in this browser, encrypted. Another phone, browser or a Home Screen shortcut starts empty — move data with a backup. A backup can only be restored with the password it was made with.</p>
+          <div class="card-flat small">
+            <b>Last backup:</b> ${s.lastBackupAt ? esc(new Date(s.lastBackupAt).toLocaleString()) : 'never'}<br>
+            <b>Storage:</b> ${app.state.persisted ? 'marked persistent by the browser' : 'standard (the browser may clear it)'}
+          </div>
+          ${IS_IOS ? `<div class="notice">${icon('alert')}<div><b>On iPhone:</b> Safari can erase a site's saved data if you don't open it for 7 days, and Private Browsing never keeps it. Open Spendly at least weekly and keep a backup in Files or iCloud Drive. Backups and CSVs open the share sheet — choose <b>Save to Files</b>.</div></div>` : ''}
+          ${EMBEDDED ? `<div class="notice warn">${icon('alert')}<div>Downloads are blocked in this embedded preview. They work on the GitHub Pages version.</div></div>` : ''}
+          <div class="row">
+            <button class="btn btn-primary" data-act="backup">${icon('download')}Download encrypted backup</button>
+            <label class="btn btn-ghost">${icon('refresh')}Restore backup<input type="file" id="restore-file" accept=".json,application/json,text/plain" hidden /></label>
+            <button class="btn btn-ghost" data-act="export-all">${icon('download')}Transactions CSV</button>
+            <button class="btn btn-ghost" data-act="export-assets">${icon('download')}Assets CSV</button>
+          </div>
+          <h3 style="margin-top:8px">Demo data</h3>
+          <p class="small muted">Adds clearly marked sample accounts, assets, a credit card, a goal and two illustrative months of income and expenses to explore Spendly. Your own records are never changed, and “Remove demo data” deletes only the sample records.</p>
+          <div class="row">${store.hasDemoData()
+            ? `<button class="btn btn-danger" data-act="demo-remove">${icon('trash')}Remove demo data</button>`
+            : `<button class="btn btn-ghost" data-act="demo-load">${icon('spark')}Load demo data</button>`}</div>
+        </article>
         <article class="card form">
           <h2>Appearance</h2>
           <div class="chips">${['dark', 'light'].map((t) => `<button class="chip" data-act="set-theme" data-theme="${t}" aria-pressed="${s.theme === t}">${icon(t === 'dark' ? 'moon' : 'sun')}${t === 'dark' ? 'Dark' : 'Light'}</button>`).join('')}</div>
@@ -249,22 +273,9 @@ export const settings = {
             <div class="row"><button class="btn btn-ghost" type="submit">Change password</button><button class="btn btn-ghost" type="button" data-act="lock">${icon('lock')}Lock now</button></div>
           </form>
         </article>
-        <article class="card form span-2">
-          <h2>Data, backup & export</h2>
-          <p class="small muted">Your data lives only in this browser. Clearing site data, or using another device or browser, starts empty — so download an encrypted backup regularly. A backup can only be restored with the password it was made with.</p>
-          ${EMBEDDED ? `<div class="notice warn">${icon('alert')}<div>Downloads are blocked in this embedded preview. They work on the GitHub Pages version.</div></div>` : ''}
-          <div class="row">
-            <button class="btn btn-primary" data-act="backup">${icon('download')}Download encrypted backup</button>
-            <label class="btn btn-ghost">${icon('refresh')}Restore backup<input type="file" id="restore-file" accept="application/json,.json" hidden /></label>
-            <button class="btn btn-ghost" data-act="export-all">${icon('download')}Transactions CSV</button>
-            <button class="btn btn-ghost" data-act="export-assets">${icon('download')}Assets CSV</button>
-          </div>
-          <h3 style="margin-top:8px">Demo data</h3>
-          <p class="small muted">Adds clearly marked sample accounts, assets and an illustrative month (₹65,000 income, ₹25,500 expenses) to explore Spendly. Your own records are never changed, and “Remove demo data” deletes only the sample records.</p>
-          <div class="row">${store.hasDemoData()
-            ? `<button class="btn btn-danger" data-act="demo-remove">${icon('trash')}Remove demo data</button>`
-            : `<button class="btn btn-ghost" data-act="demo-load">${icon('spark')}Load demo data</button>`}</div>
-        </article>
+      </div>
+      <p class="version" style="margin-top:16px">Spendly · build ${esc(document.querySelector('meta[name="spendly-build"]')?.content || 'local')}</p>
+      <div>
       </div>`;
   },
   after(root) {
@@ -318,14 +329,17 @@ actions['set-theme'] = async (el) => {
 actions['manage-categories'] = () => openCategoryManager('expense');
 actions['backup'] = async () => {
   const text = await S().exportBackup();
-  download(`spendly-backup-${S().today()}.json`, text, 'application/json');
-  toast('Encrypted backup downloaded — keep it somewhere safe');
+  const r = await download(`spendly-backup-${S().today()}.json`, text, 'application/json');
+  if (r === 'cancelled') return toast('Backup not saved');
+  await S().recordBackup();
+  toast(r === 'shared' ? 'Backup ready — choose “Save to Files” to keep it' : 'Encrypted backup downloaded — keep it somewhere safe');
+  app.render();
 };
-actions['export-all'] = () => {
+actions['export-all'] = async () => {
   const db = S().db;
   const list = [...db.transactions].sort((a, b) => (a.date < b.date ? -1 : 1));
-  download(`spendly-transactions-${S().today()}.csv`, transactionsToCsv(db, list), 'text/csv');
-  toast(`Exported ${list.length} transactions`);
+  const r = await download(`spendly-transactions-${S().today()}.csv`, transactionsToCsv(db, list), 'text/csv');
+  if (r !== 'cancelled') toast(`Exported ${list.length} transactions`);
 };
 actions['demo-load'] = async () => {
   if (!(await ask({ title: 'Load demo data?', message: 'Sample accounts, assets, a credit card, a goal and two months of transactions will be added, each marked “demo”. Your own records stay untouched.', confirmText: 'Load demo data' }))) return;

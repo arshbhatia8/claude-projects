@@ -79,6 +79,44 @@ export function monthLabel(ym, short = false) {
   return short ? MONTHS[m - 1] : `${MONTHS_LONG[m - 1]} ${y}`;
 }
 
+// ---------- month / year picker ----------
+
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** Compact [‹ Oct 2026 ›] control; the label opens a month/year sheet. */
+export function periodControl() {
+  const [y, m] = app.state.month.split('-').map(Number);
+  return `<div class="period" role="group" aria-label="Month">
+    <button class="icon-btn sm" data-act="month-step" data-step="-1" aria-label="Previous month">${icon('left')}</button>
+    <button class="period-btn" data-act="pick-month" aria-label="Choose month and year, currently ${MONTHS_LONG[m - 1]} ${y}">${MONTH_SHORT[m - 1]} ${y}</button>
+    <button class="icon-btn sm" data-act="month-step" data-step="1" aria-label="Next month">${icon('right')}</button>
+  </div>`;
+}
+
+actions['pick-month'] = () => {
+  let year = Number(app.state.month.slice(0, 4));
+  const draw = () => {
+    const today = app.store.today().slice(0, 7);
+    $('#month-picker').innerHTML = `<div class="form">
+      <div class="year-step"><button class="icon-btn" data-year="-1" aria-label="Previous year">${icon('left')}</button><b>${year}</b><button class="icon-btn" data-year="1" aria-label="Next year">${icon('right')}</button></div>
+      <div class="month-grid">${MONTH_SHORT.map((n, i) => {
+        const v = `${year}-${String(i + 1).padStart(2, '0')}`;
+        return `<button class="chip" data-month="${v}" aria-pressed="${v === app.state.month}">${n}${v === today ? ' •' : ''}</button>`;
+      }).join('')}</div>
+      <button class="btn btn-ghost btn-block" data-month="${today}">Jump to this month</button>
+    </div>`;
+  };
+  sheet.open({ title: 'Choose month', html: '<div id="month-picker"></div>', onMount(root) {
+    draw();
+    $('#month-picker', root).addEventListener('click', (e) => {
+      const yb = e.target.closest('[data-year]');
+      if (yb) { year += Number(yb.dataset.year); draw(); return; }
+      const mb = e.target.closest('[data-month]');
+      if (mb) { app.state.month = mb.dataset.month; sheet.close(); app.render(); }
+    });
+  } });
+};
+
 // ---------- names & icons ----------
 
 export function categoryName(id) {
@@ -263,13 +301,38 @@ export async function submitting(form, fn) {
   }
 }
 
-export function download(filename, text, type) {
+export const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+function anchorDownload(filename, text, type) {
   const url = URL.createObjectURL(new Blob([text], { type }));
-  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+  const a = Object.assign(document.createElement('a'), { href: url, download: filename, rel: 'noopener' });
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+/**
+ * Save a file. On iPhone/iPad this opens the share sheet ("Save to Files",
+ * AirDrop, Mail…), which is the most reliable way to keep a file on iOS.
+ * Everywhere else, and if sharing is unavailable, it downloads normally.
+ * Resolves to 'shared' | 'downloaded' | 'cancelled'.
+ */
+export async function download(filename, text, type) {
+  if (IS_IOS && typeof File === 'function' && navigator.canShare) {
+    try {
+      const file = new File([text], filename, { type });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: filename });
+        return 'shared';
+      }
+    } catch (err) {
+      if (err && err.name === 'AbortError') return 'cancelled';
+      // NotAllowedError etc.: fall through to a normal download
+    }
+  }
+  anchorDownload(filename, text, type);
+  return 'downloaded';
 }
 
 export function emptyState(iconName, title, text, actionHtml = '') {

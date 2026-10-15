@@ -1,3 +1,9 @@
 node_modules/
 data/
+dist/
 .env
+.env.*
+*.db
+*.sqlite
+spendly-backup-*.json
+spendly-*.csv

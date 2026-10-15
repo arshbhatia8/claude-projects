@@ -8,6 +8,7 @@ import { toInputValue, formatINR } from '../core/money.js';
 import { reversibleAmount } from '../core/ledger.js';
 
 const S = () => app.store;
+const yesterday = () => new Date(Date.parse(S().today() + 'T00:00:00Z') - 864e5).toISOString().slice(0, 10);
 const done = (msg) => {
   sheet.close();
   toast(msg);
@@ -47,7 +48,7 @@ export function openTxForm({ mode = 'new', values = {}, template = null, candida
   const title = template ? template.name : mode === 'edit' ? 'Edit transaction' : mode === 'gmail' ? 'Review import' : isReversal ? 'Reverse transaction' : 'Add transaction';
   const maxReverse = isReversal ? reversibleAmount(store.db, original.id) : 0;
 
-  const typeChips = isReversal
+  const typeChips = isReversal || template
     ? ''
     : `<div class="type-toggle" role="radiogroup" aria-label="Transaction type">${['expense', 'income', 'transfer', 'investment', 'refund']
         .map((t) => `<button type="button" class="chip" data-type="${t}" role="radio" aria-pressed="${t === type}">${icon(TYPE_ICON[t])}${TX_TYPES[t].label}</button>`)
@@ -57,10 +58,11 @@ export function openTxForm({ mode = 'new', values = {}, template = null, candida
     <form class="form" id="tx-form" novalidate>
       ${typeChips}
       ${isReversal ? `<div class="notice">${icon('undo')}<div>Reversing <b>${esc(original.description)}</b> (${esc(TX_TYPES[original.type].label)}, ${esc(fmtDate(original.date))}). Up to <b>${esc(formatINR(maxReverse))}</b> can still be reversed. The reversal undoes its effect on balances and reports.</div></div>` : ''}
+      ${template ? `<p class="muted small" style="text-align:center">${esc(TX_TYPES[type].label)} from your template · nothing is saved until you tap ${esc(TX_TYPES[type].verb)}</p>` : ''}
       ${candidate ? `<div class="notice">${icon('mail')}<div><b>${esc(candidate.subject)}</b><br><span class="tiny muted">${esc(candidate.sender)} · ${esc(fmtDate(candidate.emailDate))}</span></div></div>` : ''}
       <div class="amount-box field">
         <span>Amount</span>
-        <div class="amount-input"><b>₹</b><input name="amount" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(toInputValue(isReversal ? values.amount ?? maxReverse : values.amount))}" aria-label="Amount in rupees" /></div>
+        <div class="amount-input"><b>₹</b><input name="amount" inputmode="decimal" enterkeyhint="done" autocomplete="off" placeholder="0" value="${esc(toInputValue(isReversal ? values.amount ?? maxReverse : values.amount))}" aria-label="Amount in rupees" /></div>
       </div>
       <div id="tx-fields" class="form-grid"></div>
       <p class="confirm-line" id="tx-confirm"></p>
@@ -90,14 +92,27 @@ export function openTxForm({ mode = 'new', values = {}, template = null, candida
           ${hasSubs ? field('Subcategory', `<select name="subcategoryId">${subcategoryOptions(cat, state.subcategoryId)}</select>`) : ''}
           ${fromKinds ? field(FROM_LABEL[type], `<select name="from">${endpointOptions(fromKinds, state.from, { blank: type === 'transfer' ? 'Choose…' : 'Not linked to an account' })}</select>`, { hint: type === 'expense' ? 'Pick a credit card to record a card purchase' : '' }) : ''}
           ${toKinds ? field(TO_LABEL[type], `<select name="to">${endpointOptions(toKinds, state.to, { blank: type === 'transfer' || type === 'investment' ? 'Choose…' : 'Not linked to an account' })}</select>`, { hint: type === 'transfer' ? 'Paying a credit card bill? Choose the card here.' : '' }) : ''}
-          ${field('Date', `<input type="date" name="date" value="${esc(state.date || store.today())}" />`)}
-          ${field('Time (optional)', `<input type="time" name="time" value="${esc(state.time || '')}" />`)}
-          ${field('Description', `<input name="description" maxlength="200" autocomplete="off" value="${esc(state.description || '')}" placeholder="${type === 'income' ? 'e.g. October salary' : 'e.g. Masala dosa'}" />`, { full: true })}
-          ${!isReversal ? field('Payment method', `<select name="paymentMethod">${paymentOptions(state.paymentMethod || '')}</select>`) : ''}
-          ${!isReversal ? field('Reference (optional)', `<input name="externalRef" maxlength="64" autocomplete="off" value="${esc(state.externalRef || '')}" placeholder="UPI ref / txn id" />`) : ''}
-          ${field('Notes', `<textarea name="notes" rows="2" maxlength="1000">${esc(state.notes || '')}</textarea>`, { full: true })}
-          ${showTemplate ? `<label class="check full"><input type="checkbox" name="saveTemplate" ${state.saveTemplate ? 'checked' : ''}/> Save as reusable template</label>
-            <label class="field full" id="tpl-name-wrap" ${state.saveTemplate ? '' : 'hidden'}><span>Template name</span><input name="templateName" maxlength="60" value="${esc(state.templateName || state.description || '')}" placeholder="e.g. Breakfast – Dosa" /></label>` : ''}
+          <div class="field full"><span>Date</span>
+            <div class="row" style="flex-wrap:nowrap">
+              <div class="date-chips" role="group" aria-label="Quick date">
+                <button type="button" class="chip" data-date="${esc(store.today())}" aria-pressed="${(state.date || store.today()) === store.today()}">Today</button>
+                <button type="button" class="chip" data-date="${esc(yesterday())}" aria-pressed="${state.date === yesterday()}">Yesterday</button>
+              </div>
+              <input type="date" name="date" value="${esc(state.date || store.today())}" aria-label="Date" style="flex:1;min-width:0" />
+            </div>
+          </div>
+          ${field('Description', `<input name="description" maxlength="200" autocomplete="off" enterkeyhint="done" value="${esc(state.description || '')}" placeholder="${type === 'income' ? 'e.g. October salary' : 'e.g. Masala dosa'}" />`, { full: true })}
+          <details class="more-fields" ${state.moreOpen || state.time || state.notes || state.externalRef ? 'open' : ''}>
+            <summary class="small"><b>More details</b><span class="muted">&nbsp;· time, payment method, notes${showTemplate ? ', save as template' : ''}</span></summary>
+            <div class="form-grid">
+              ${field('Time (optional)', `<input type="time" name="time" value="${esc(state.time || '')}" />`)}
+              ${!isReversal ? field('Payment method', `<select name="paymentMethod">${paymentOptions(state.paymentMethod || '')}</select>`) : ''}
+              ${!isReversal ? field('Reference (optional)', `<input name="externalRef" maxlength="64" autocomplete="off" value="${esc(state.externalRef || '')}" placeholder="UPI ref / txn id" />`, { full: true }) : ''}
+              ${field('Notes', `<textarea name="notes" rows="2" maxlength="1000">${esc(state.notes || '')}</textarea>`, { full: true })}
+              ${showTemplate ? `<label class="check full"><input type="checkbox" name="saveTemplate" ${state.saveTemplate ? 'checked' : ''}/> Save as reusable template</label>
+                <label class="field full" id="tpl-name-wrap" ${state.saveTemplate ? '' : 'hidden'}><span>Template name</span><input name="templateName" maxlength="60" value="${esc(state.templateName || state.description || '')}" placeholder="e.g. Breakfast – Dosa" /></label>` : ''}
+            </div>
+          </details>
         `;
         if (type === 'investment' && !store.db.assets.some((a) => a.status === 'active' && !a.archived)) {
           $('#tx-fields', form).insertAdjacentHTML('afterbegin', `<div class="notice warn full">${icon('alert')}<div>Add the asset first (Assets → Add Asset), then record money going into it.</div></div>`);
@@ -105,7 +120,15 @@ export function openTxForm({ mode = 'new', values = {}, template = null, candida
         updateConfirm();
       };
 
-      const capture = () => Object.assign(state, readForm(form), { from: parseRef(form.from?.value), to: parseRef(form.to?.value) });
+      const capture = () => Object.assign(state, readForm(form), { from: parseRef(form.from?.value), to: parseRef(form.to?.value), moreOpen: Boolean($('.more-fields', form)?.open) });
+
+      form.addEventListener('click', (e) => {
+        const chip = e.target.closest('[data-date]');
+        if (!chip) return;
+        form.elements.date.value = chip.dataset.date;
+        $$('[data-date]', form).forEach((c) => c.setAttribute('aria-pressed', String(c === chip)));
+        updateConfirm();
+      });
 
       const updateConfirm = () => {
         const v = readForm(form);
@@ -138,7 +161,10 @@ export function openTxForm({ mode = 'new', values = {}, template = null, candida
         if (e.target.name === 'saveTemplate') $('#tpl-name-wrap', form).hidden = !e.target.checked;
         updateConfirm();
       });
-      form.addEventListener('input', updateConfirm);
+      form.addEventListener('input', (e) => {
+        if (e.target.name === 'date') $$('[data-date]', form).forEach((c) => c.setAttribute('aria-pressed', String(c.dataset.date === e.target.value)));
+        updateConfirm();
+      });
 
       form.addEventListener('submit', (e) => {
         e.preventDefault();
@@ -173,6 +199,10 @@ export function openTxForm({ mode = 'new', values = {}, template = null, candida
 
       renderFields();
       const amountInput = form.amount;
+      // Keep "₹" snug against the number (CSS field-sizing is not in every Safari).
+      const fit = () => { amountInput.style.width = `${Math.max(2, (amountInput.value || amountInput.placeholder).length) + 0.6}ch`; };
+      amountInput.addEventListener('input', fit);
+      fit();
       if (!amountInput.value) amountInput.focus();
     },
   });
@@ -402,26 +432,31 @@ export function openAssetForm(existing = null, presetType = null) {
     <form class="form" id="asset-form" novalidate>
       <div class="notice">${icon('alert')}<div>Values here are maintained by you. Spendly never connects to banks, brokers or live prices.</div></div>
       <div class="form-grid">
-        ${field('Asset type', `<select name="type">${Object.entries(ASSET_TYPES).map(([k, t]) => opt(k, t.label, v.type)).join('')}</select>`)}
+        ${field('Asset type', `<select name="type">${Object.entries(ASSET_TYPES).map(([k, t]) => opt(k, t.label, v.type)).join('')}</select>`, { hint: 'Bank balances and cash in hand go under Bank Accounts & Cash' })}
         ${field('Name', `<input name="name" maxlength="60" value="${esc(v.name || '')}" placeholder="e.g. SBI FD 2027" />`)}
         ${f('institution', 'Institution / provider', `<input name="institution" maxlength="60" value="${esc(v.institution || '')}" />`)}
         ${f('symbol', 'Symbol / identifier', `<input name="symbol" maxlength="20" value="${esc(v.symbol || '')}" placeholder="e.g. NIFTYBEES" />`)}
         ${f('quantity', 'Quantity / units', `<input name="quantity" inputmode="decimal" value="${esc(v.quantity || '')}" />`)}
-        ${f('avgPrice', 'Average purchase price', `<input name="avgPrice" inputmode="decimal" value="${esc(toInputValue(v.avgPrice))}" />`)}
         ${f('grams', 'Quantity (grams)', `<input name="grams" inputmode="decimal" value="${esc(v.grams || '')}" />`)}
         ${f('monthlyInstallment', 'Monthly installment', `<input name="monthlyInstallment" inputmode="decimal" value="${esc(toInputValue(v.monthlyInstallment))}" />`)}
         ${f('openedOn', 'Opening / purchase date', `<input type="date" name="openedOn" value="${esc(v.openedOn || '')}" />`)}
         ${f('maturityDate', 'Maturity date', `<input type="date" name="maturityDate" value="${esc(v.maturityDate || '')}" />`)}
         ${f('tenureMonths', 'Tenure (months)', `<input name="tenureMonths" inputmode="numeric" value="${esc(v.tenureMonths || '')}" />`)}
-        ${f('installmentsBefore', 'Installments paid before tracking', `<input name="installmentsBefore" inputmode="numeric" value="${esc(v.installmentsBefore || '')}" />`, { hint: 'Installments you record later are counted automatically' })}
-        ${f('interestRate', 'Interest rate % (optional)', `<input name="interestRate" inputmode="decimal" value="${esc(v.interestRate || '')}" />`)}
-        ${f('interestType', 'Interest calculation (optional)', `<input name="interestType" maxlength="40" value="${esc(v.interestType || '')}" placeholder="e.g. Quarterly compounding" />`)}
-        ${f('maturityAmount', 'Maturity amount (optional)', `<input name="maturityAmount" inputmode="decimal" value="${esc(toInputValue(v.maturityAmount))}" />`, { hint: 'As stated by your bank. Spendly does not calculate it.' })}
-        ${f('linkedAccountId', 'Linked account (optional)', `<select name="linkedAccountId">${accountOpts(v.linkedAccountId)}</select>`)}
-        ${f('documentRef', 'Document reference (optional)', `<input name="documentRef" maxlength="200" value="${esc(v.documentRef || '')}" placeholder="e.g. FD receipt no. / Drive link" />`)}
         <label class="check full" ${show('liquid')}><input type="checkbox" name="liquid" ${v.liquid ? 'checked' : ''}/> Counts as liquid cash</label>
+        <details class="more-fields">
+          <summary class="small"><b>Optional details</b><span class="muted">&nbsp;· rates, maturity amount, linked account, notes</span></summary>
+          <div class="form-grid">
+          ${f('avgPrice', 'Average purchase price', `<input name="avgPrice" inputmode="decimal" value="${esc(toInputValue(v.avgPrice))}" />`)}
+          ${f('interestRate', 'Interest rate % (optional)', `<input name="interestRate" inputmode="decimal" value="${esc(v.interestRate || '')}" />`)}
+          ${f('interestType', 'Interest calculation (optional)', `<input name="interestType" maxlength="40" value="${esc(v.interestType || '')}" placeholder="e.g. Quarterly compounding" />`)}
+          ${f('maturityAmount', 'Maturity amount (optional)', `<input name="maturityAmount" inputmode="decimal" value="${esc(toInputValue(v.maturityAmount))}" />`, { hint: 'As stated by your bank. Spendly does not calculate it.' })}
+          ${f('installmentsBefore', 'Installments paid before tracking', `<input name="installmentsBefore" inputmode="numeric" value="${esc(v.installmentsBefore || '')}" />`, { hint: 'Installments you record later are counted automatically' })}
+          ${f('linkedAccountId', 'Linked account (optional)', `<select name="linkedAccountId">${accountOpts(v.linkedAccountId)}</select>`)}
+          ${f('documentRef', 'Document reference (optional)', `<input name="documentRef" maxlength="200" value="${esc(v.documentRef || '')}" placeholder="e.g. FD receipt no. / Drive link" />`)}
+          ${field('Notes', `<textarea name="notes" rows="2">${esc(v.notes || '')}</textarea>`, { full: true })}
+          </div>
+        </details>
         ${existing ? field('Status', `<select name="status">${Object.entries(ASSET_STATUS).map(([k, l]) => opt(k, l, v.status)).join('')}</select>`) : ''}
-        ${field('Notes', `<textarea name="notes" rows="2">${esc(v.notes || '')}</textarea>`, { full: true })}
       </div>
       ${existing ? `
         <details class="card-flat"><summary class="small">Amounts before tracking in Spendly</summary>

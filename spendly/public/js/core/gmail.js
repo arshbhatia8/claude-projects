@@ -50,7 +50,9 @@ function loadGis() {
 async function getToken(clientId, { prompt = '' } = {}) {
   if (token && Date.now() < tokenExpires - 60_000) return token;
   if (!clientId) throw new GmailError('Add your Google client ID first.', 'config');
-  await loadGis();
+  // No await when Google's script is already loaded: iOS Safari only allows the
+  // sign-in popup if it opens in the same tap that started it.
+  if (!globalThis.google?.accounts?.oauth2) await loadGis();
   return new Promise((resolve, reject) => {
     const client = globalThis.google.accounts.oauth2.initTokenClient({
       client_id: clientId,
@@ -133,6 +135,11 @@ async function readMessage(id, timeZone) {
   };
 }
 
+/** Load Google's sign-in script ahead of time so Connect/Sync can open the popup instantly. */
+export function preload() {
+  return loadGis().catch(() => {});
+}
+
 export async function connect(clientId) {
   token = null;
   await getToken(clientId, { prompt: 'consent' });
@@ -152,7 +159,7 @@ export async function sync({ store, days = 30, max = 300, onProgress = () => {} 
   const { clientId, filter, processedIds } = store.db.gmail;
   const timeZone = store.db.settings.timezone;
   try {
-    await getToken(clientId);
+    await getToken(clientId); // first statement: keeps the popup inside the user's tap
     const q = `${DEFAULT_QUERY} newer_than:${days}d ${filter || ''}`.trim();
     const ids = [];
     let pageToken;

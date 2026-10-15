@@ -132,6 +132,38 @@ document.addEventListener('click', async (e) => {
 });
 
 $('#sheet').addEventListener('close', () => { $('#sheet-body').innerHTML = ''; });
+
+// ---------------------------------------------------------------------------
+// iPhone: keep sheets above the on-screen keyboard and focused fields visible
+// ---------------------------------------------------------------------------
+
+const vv = window.visualViewport;
+function syncViewport() {
+  if (!vv) return;
+  const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  document.documentElement.style.setProperty('--kb', `${Math.round(kb)}px`);
+  document.documentElement.style.setProperty('--vvh', `${Math.round(vv.height)}px`);
+}
+vv?.addEventListener('resize', syncViewport);
+vv?.addEventListener('scroll', syncViewport);
+syncViewport();
+
+document.addEventListener('focusin', (e) => {
+  const el = e.target;
+  if (!el.matches?.('input, select, textarea') || !el.closest('#sheet')) return;
+  setTimeout(() => el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 320);
+});
+
+// Return/Done on the phone keyboard closes the keyboard instead of submitting
+// a form, so a transaction is only ever saved by tapping its Save button.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.isComposing) return;
+  const el = e.target;
+  if (!(el instanceof HTMLInputElement) || !el.form || el.type === 'checkbox' || el.type === 'radio') return;
+  if (el.form.id === 'lock-form') return; // Return unlocks, as expected
+  e.preventDefault();
+  el.blur();
+});
 $('#sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') sheet.close(); });
 
 actions['close-sheet'] = () => sheet.close();
@@ -218,7 +250,16 @@ $('#lock-reset').addEventListener('click', async () => {
   showLock('setup');
 });
 
+async function requestPersistentStorage() {
+  try {
+    if (navigator.storage?.persist) {
+      app.state.persisted = (await navigator.storage.persisted()) || (await navigator.storage.persist());
+    }
+  } catch { app.state.persisted = false; }
+}
+
 function enterApp() {
+  requestPersistentStorage();
   $('#lock').hidden = true;
   $('#shell').hidden = false;
   app.state.month = store.today().slice(0, 7);

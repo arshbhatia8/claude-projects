@@ -97,6 +97,7 @@ export function emptyDb(now = new Date()) {
       revealAmounts: false,
       dateFormat: 'DD MMM YYYY',
       timezone: 'Asia/Kolkata',
+      lastBackupAt: null,
     },
     categories: defaultCategories(),
     accounts: [],
@@ -960,6 +961,13 @@ export function createStore({ storage = globalThis.localStorage, session = globa
     });
   }
 
+  function recordBackup() {
+    return mutate((d) => {
+      d.settings.lastBackupAt = nowIso();
+      return d.settings.lastBackupAt;
+    });
+  }
+
   // ---------- Gmail (review-and-approve) ----------
 
   function setGmail(patch) {
@@ -1206,7 +1214,7 @@ export function createStore({ storage = globalThis.localStorage, session = globa
     saveAccount, setArchived, deleteEntity, recordSnapshot, deleteSnapshot,
     addAsset, updateAsset, closeAsset, saveLiability, saveGoal, deleteGoal,
     // settings
-    updateSettings,
+    updateSettings, recordBackup,
     // gmail
     setGmail, addGmailCandidates, updateGmailCandidate, approveGmailCandidate, setGmailCandidateStatus, recordGmailError, candidateToInput,
     // demo & backup
