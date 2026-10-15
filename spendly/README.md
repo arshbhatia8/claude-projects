@@ -1,6 +1,8 @@
 # Spendly
 
-A private personal finance tracker for one person, in Indian Rupees.
+**App:** https://arshbhatia8.github.io/claude-projects/ (GitHub Pages, published from the `gh-pages` branch)
+
+A private personal finance tracker for one person, in Indian Rupees, designed first for iPhone.
 It is free to run: no server, no subscription, no install. Spendly runs in your browser, and your data is encrypted with your password and stays on your device.
 
 - **My Finance dashboard**: liquid balance, income credited, expenses debited, net cash flow, investments, total assets, liabilities and net worth for any month. It also shows charts, insights and recent activity.
@@ -84,18 +86,32 @@ All money fields are **integer paise**. Each transaction stores its type, amount
 2. Enable the [Gmail API](https://console.cloud.google.com/apis/library/gmail.googleapis.com).
 3. Go to **Google Auth Platform → Audience**, choose **External**, and add your own Gmail under **Test users**.
 4. Go to **Data access** and add only `https://www.googleapis.com/auth/gmail.readonly`.
-5. Go to **Clients → Create client → Web application**. Under **Authorized JavaScript origins**, add the origin the app runs on. For GitHub Pages that is `https://arshbhatia8.github.io`. You don't need a redirect URI or a client secret.
+5. Go to **Clients → Create client → Web application**. Under **Authorized JavaScript origins**, add exactly `https://arshbhatia8.github.io` (no path, no trailing slash). You don't need a redirect URI or a client secret.
 6. In Spendly, open **Gmail Imports**, paste the Client ID and press **Connect Gmail**. Then press **Sync now** whenever you like.
 
 Google will warn that the app "hasn't been verified". That's expected for your own personal client, so continue. Every detected email waits under **Pending**, where you can **Approve & import**, **Edit first**, **Mark reviewed** or **Reject**. Spendly also flags possible duplicates (the same email, the same reference number such as a forwarded alert, or the same amount within a day). Approving the same email twice can't create two transactions.
 
 ---
 
+## Using Spendly on iPhone
+
+- Open the link in **Safari** (not a Private tab). The bottom bar has Home, Activity, a big **+** for Quick Add, Assets and **More**, which holds the other six sections.
+- **Quick Add**: tap a favourite on the dashboard or a template tile. The amount box gets focus with the number pad when it needs a value. Use the **Today / Yesterday** chips or pick a date, then tap **Save Expense**. Return on the keyboard only closes it; nothing is saved until you tap Save.
+- **Backups and CSVs** open the iOS share sheet. Choose **Save to Files** (or iCloud Drive). To restore, go to Settings → Restore backup, pick the file in Files, and enter the password the backup was made with.
+- **Safari storage rules**: Safari may delete a website's saved data if you don't open it for 7 days, and Private Browsing keeps nothing. A Home Screen shortcut has its own separate storage. Open Spendly at least weekly and keep a recent backup. The dashboard reminds you when your last backup is more than a week old.
+
+## Deployment (GitHub Pages)
+
+`npm run build` copies `public/` into `dist/`. It adds the commit hash to the page (shown at the bottom of Settings) and creates a `404.html` that sends paths like `/claude-projects/quick` back to `/#quick`. It then **refuses to finish** if any check fails: every asset path must be relative (so the app works under `/claude-projects/`), every module import must resolve, no credential patterns or database/env files may be present, and the security policy and viewport tags must be present. The contents of `dist/` are committed to the `gh-pages` branch, which GitHub Pages serves.
+
+To publish an update: run `npm test`, then `npm run build`, then copy `dist/` into a checkout of `gh-pages`, commit and push. No force-push is needed.
+
 ## Running the tests (developers only)
 
 ```bash
 cd spendly
-npm test          # 29 tests: accounting rules, store, migration, Gmail review, parser, duplicates
+npm test          # 30 tests: accounting rules, store, migration, Gmail review, parser, duplicates, build checks
+npm run build     # produces dist/ for GitHub Pages and runs the publishing checks
 npm start         # serves public/ at http://localhost:4000 (needs Node 20+)
 ```
 
