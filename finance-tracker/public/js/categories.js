@@ -1,6 +1,7 @@
 // Options shown in the "Add transaction" form. Free text is still accepted,
 // so these are suggestions, not a hard list.
-module.exports = {
+(function (root) {
+const LedgerCategories = {
   categories: {
     debit: [
       'Food & Dining', 'Groceries', 'Shopping', 'Transport', 'Fuel', 'Rent', 'Bills & Utilities',
@@ -19,3 +20,6 @@ module.exports = {
   },
   paymentModes: ['UPI', 'Debit Card', 'Credit Card', 'Net Banking', 'Cash', 'Wallet', 'Cheque', 'Auto-debit', 'Other'],
 };
+if (typeof module === 'object' && module.exports) module.exports = LedgerCategories;
+else root.LedgerCategories = LedgerCategories;
+})(typeof self !== 'undefined' ? self : this);

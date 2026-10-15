@@ -69,26 +69,30 @@ function toast(msg) {
   toast.t = setTimeout(() => el.classList.remove('show'), 3200);
 }
 
-async function api(path, { method = 'GET', body } = {}) {
-  const res = await fetch(`/api${path}`, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-    credentials: 'same-origin',
-  });
-  if (res.status === 401 && !path.startsWith('/auth')) {
-    showAuth();
-    throw new Error('Signed out');
+const Backend = window.LedgerBackend;
+
+async function api(path, opts) {
+  try {
+    return await Backend.request(path, opts);
+  } catch (err) {
+    if (err.status === 401) showAuth();
+    throw err;
   }
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
-  return json;
+}
+
+function download(filename, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // ---------- auth ----------
 let authMode = 'login';
 async function boot() {
-  const s = await api('/auth/status');
+  const s = await Backend.status();
   if (!s.signedIn) return showAuth(s.setUp ? 'login' : 'setup');
   await startApp();
 }
@@ -100,6 +104,8 @@ function showAuth(mode = 'login') {
   $('#auth-hint').textContent = setup ? 'First time here — choose a password to keep your data private.' : 'Welcome back. Unlock your tracker.';
   $('#auth-label').textContent = setup ? 'New password' : 'Password';
   $('#auth-confirm-wrap').classList.toggle('hidden', !setup);
+  $('#auth-reset').classList.toggle('hidden', setup);
+  $('#auth-note').classList.toggle('hidden', !setup);
   $('#auth-submit').textContent = setup ? 'Create & continue' : 'Unlock';
   $('#auth-password').autocomplete = setup ? 'new-password' : 'current-password';
   $('#auth-password').focus();
@@ -108,18 +114,28 @@ $('#auth-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const password = $('#auth-password').value;
   $('#auth-error').textContent = '';
+  $('#auth-submit').disabled = true;
   try {
     if (authMode === 'setup') {
       if (password !== $('#auth-confirm').value) throw new Error('Passwords do not match');
-      await api('/auth/setup', { method: 'POST', body: { password } });
+      await Backend.setup(password);
     } else {
-      await api('/auth/login', { method: 'POST', body: { password } });
+      await Backend.unlock(password);
     }
     $('#auth-password').value = $('#auth-confirm').value = '';
+    $('#auth-submit').disabled = false;
     await startApp();
   } catch (err) {
     $('#auth-error').textContent = err.message;
+    $('#auth-submit').disabled = false;
   }
+});
+
+$('#auth-reset').addEventListener('click', () => {
+  if (!confirm('Forgot your password? This deletes ALL data saved in this browser so you can start fresh. It cannot be undone.')) return;
+  if (prompt('Type DELETE to confirm') !== 'DELETE') return;
+  Backend.resetEverything();
+  showAuth('setup');
 });
 
 async function startApp() {
@@ -134,13 +150,13 @@ async function startApp() {
 
 // ---------- routing ----------
 function route() {
-  const [view, query] = (location.hash.slice(1) || 'dashboard').split('?');
+  const [view] = (location.hash.slice(1) || 'dashboard').split('?');
   const name = ['dashboard', 'transactions', 'settings'].includes(view) ? view : 'dashboard';
   $$('.view').forEach((v) => v.classList.toggle('hidden', v.id !== `view-${name}`));
   $$('[data-view]').forEach((a) => a.classList.toggle('active', a.dataset.view === name));
   if (name === 'dashboard') renderDashboard();
   if (name === 'transactions') renderTransactions();
-  if (name === 'settings') renderSettings(new URLSearchParams(query));
+  if (name === 'settings') renderSettings();
   window.scrollTo({ top: 0 });
 }
 window.addEventListener('hashchange', () => !$('#app').classList.contains('hidden') && route());
@@ -264,7 +280,7 @@ function txRow(t, { showDate = true } = {}) {
 async function renderTransactions() {
   const params = new URLSearchParams(Object.entries(state.filters).filter(([, v]) => v));
   const qs = params.toString();
-  $('#export-link').href = `/api/export.csv${qs ? '?' + qs : ''}`;
+  state.exportQs = qs;
   const rows = await api(`/transactions?limit=2000${qs ? '&' + qs : ''}`);
   $('#tx-count').textContent = `${rows.length} transaction${rows.length === 1 ? '' : 's'}`;
 
@@ -290,6 +306,25 @@ async function renderTransactions() {
         .join('')
     : '<p class="empty glass" style="padding:40px">No transactions match these filters.</p>';
 }
+
+$('#export-btn').addEventListener('click', async () => {
+  download('transactions.csv', await api(`/export.csv${state.exportQs ? '?' + state.exportQs : ''}`), 'text/csv');
+});
+$('#export-all-btn').addEventListener('click', async () => download('transactions.csv', await api('/export.csv'), 'text/csv'));
+$('#backup-btn').addEventListener('click', () => {
+  download(`ledger-backup-${today()}.json`, Backend.exportBackup(), 'application/json');
+  toast('Backup downloaded — keep it somewhere safe');
+});
+$('#restore-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file || !confirm('Restore this backup? It replaces everything currently in the app.')) return;
+  try {
+    const r = await Backend.importBackup(await file.text());
+    state.meta = await api('/meta');
+    toast(`Restored ${r.imported} transactions`);
+  } catch (err) { toast(err.message); }
+});
 
 let searchTimer;
 $('#f-q').addEventListener('input', (e) => {
@@ -397,41 +432,38 @@ $('#tx-delete').addEventListener('click', async () => {
 });
 
 // ---------- settings ----------
-async function renderSettings(params) {
-  const msg = params?.get('gmail');
-  if (msg) {
-    toast(msg === 'connected' ? 'Gmail connected (read-only) ✓' : `Gmail: ${msg}`);
-    history.replaceState(null, '', '#settings');
-  }
-  const s = await api('/gmail/status');
-  $('#gmail-pill').textContent = s.connected ? `Connected · ${s.email || ''}` : 'Not connected';
-  $('#gmail-pill').classList.toggle('on', s.connected);
-  $('#gmail-connected').classList.toggle('hidden', !s.connected);
-  $('#gmail-setup').classList.toggle('hidden', s.connected);
-  $('#redirect-uri').textContent = s.redirectUri;
-  $('#connect-btn').classList.toggle('hidden', !s.configured);
-  if (!s.configured) $('.steps').open = true;
-  $('#g-client-id').disabled = s.clientIdFromEnv;
-  if (s.clientIdFromEnv) $('#g-client-id').placeholder = 'Set in .env';
-  $('#gmail-filter').value = s.filter || '';
-  $('#gmail-auto').checked = s.autoSync;
-  $('#sync-result').textContent = s.lastSync
-    ? `Last sync ${new Date(s.lastSync.at).toLocaleString()}: ${s.lastSync.imported} imported from ${s.lastSync.scanned} new emails.`
+async function renderSettings() {
+  const s = await api('/settings');
+  const connected = Boolean(s.gmailEmail);
+  $('#gmail-pill').textContent = connected ? `Connected · ${s.gmailEmail}` : 'Not connected';
+  $('#gmail-pill').classList.toggle('on', connected);
+  $('#gmail-connected').classList.toggle('hidden', !connected);
+  $('#gmail-setup').classList.toggle('hidden', connected);
+  $('#js-origin').textContent = location.origin;
+  $('#g-client-id').value = s.googleClientId || '';
+  if (!s.googleClientId) $('.steps').open = true;
+  $('#gmail-filter').value = s.gmailFilter || '';
+  const last = s.gmailLastSync;
+  $('#sync-result').textContent = last
+    ? `Last sync ${new Date(last.at).toLocaleString()}: ${last.imported} imported from ${last.scanned} new emails.`
     : 'Not synced yet.';
 }
 
 $('#gmail-config-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const clientId = $('#g-client-id').value.trim();
+  if (!/\.apps\.googleusercontent\.com$/.test(clientId)) return toast('That does not look like a Google client ID (…apps.googleusercontent.com)');
   try {
-    await api('/gmail/config', { method: 'PUT', body: { clientId: $('#g-client-id').value, clientSecret: $('#g-client-secret').value } });
-    $('#g-client-secret').value = '';
-    toast('Credentials saved — now click Connect Gmail');
+    await api('/settings', { method: 'PUT', body: { googleClientId: clientId } });
+    const email = await LedgerGmail.connect(clientId);
+    await api('/settings', { method: 'PUT', body: { gmailEmail: email } });
+    toast(`Gmail connected (read-only): ${email}`);
     renderSettings();
-  } catch (err) { toast(err.message); }
+  } catch (err) { toast(`Gmail: ${err.message}`); }
 });
 
 $('#save-filter-btn').addEventListener('click', async () => {
-  await api('/gmail/config', { method: 'PUT', body: { filter: $('#gmail-filter').value, autoSync: $('#gmail-auto').checked } });
+  await api('/settings', { method: 'PUT', body: { gmailFilter: $('#gmail-filter').value.trim() } });
   toast('Saved');
 });
 
@@ -440,7 +472,15 @@ $('#sync-btn').addEventListener('click', async () => {
   btn.disabled = true;
   btn.textContent = 'Syncing…';
   try {
-    const r = await api('/gmail/sync', { method: 'POST', body: { days: Number($('#sync-days').value) } });
+    const s = await api('/settings');
+    const r = await LedgerGmail.sync({
+      clientId: s.googleClientId,
+      days: Number($('#sync-days').value),
+      filter: s.gmailFilter,
+      backend: Backend,
+      onProgress: (done, total) => { btn.textContent = `Reading ${done}/${total}…`; },
+    });
+    await api('/settings', { method: 'PUT', body: { gmailLastSync: r } });
     toast(`Imported ${r.imported} transaction${r.imported === 1 ? '' : 's'} from ${r.scanned} new emails`);
     if (r.errors.length) console.warn('Sync errors', r.errors);
     renderSettings();
@@ -454,7 +494,8 @@ $('#sync-btn').addEventListener('click', async () => {
 
 $('#disconnect-btn').addEventListener('click', async () => {
   if (!confirm('Disconnect Gmail? Already imported transactions stay.')) return;
-  await api('/gmail/disconnect', { method: 'POST' });
+  LedgerGmail.disconnect();
+  await api('/settings', { method: 'PUT', body: { gmailEmail: null } });
   toast('Gmail disconnected');
   renderSettings();
 });
@@ -468,14 +509,14 @@ $('#currency').addEventListener('change', async (e) => {
 $('#pw-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
-    await api('/auth/change-password', { method: 'POST', body: { current: $('#pw-current').value, next: $('#pw-next').value } });
+    await Backend.changePassword($('#pw-current').value, $('#pw-next').value);
     e.target.reset();
     toast('Password changed');
   } catch (err) { toast(err.message); }
 });
 
 $('#logout-btn').addEventListener('click', async () => {
-  await api('/auth/logout', { method: 'POST' });
+  Backend.lock();
   showAuth('login');
 });
 

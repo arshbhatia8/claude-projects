@@ -2,16 +2,12 @@
   "name": "finance-tracker",
   "version": "1.0.0",
   "private": true,
-  "description": "Personal, self-hosted finance tracker with read-only Gmail import",
-  "main": "server/index.js",
+  "description": "Personal finance tracker that runs entirely in the browser, with read-only Gmail import",
   "scripts": {
-    "start": "node --disable-warning=ExperimentalWarning server/index.js",
-    "test": "node --disable-warning=ExperimentalWarning --test \"server/**/*.test.js\""
+    "start": "npx --yes serve public -l 4000",
+    "test": "node --test \"test/*.test.js\""
   },
   "engines": {
-    "node": ">=22.13"
-  },
-  "dependencies": {
-    "express": "^5.1.0"
+    "node": ">=20"
   }
 }

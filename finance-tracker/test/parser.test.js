@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseTransactionEmail, htmlToText } = require('./parser');
+const { parseTransactionEmail, htmlToText } = require('../public/js/parser');
 
 const at = Date.parse('2026-10-10T10:00:00');
 

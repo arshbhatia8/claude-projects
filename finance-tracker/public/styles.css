@@ -108,6 +108,9 @@ textarea { resize: vertical; }
 .auth-card { width: min(380px, 100%); padding: 32px 28px; box-shadow: var(--shadow); text-align: center; }
 .auth-card .field { text-align: left; }
 .auth-card p { margin: 6px 0 22px; }
+.auth-card .auth-note { margin: 16px 0 0; text-align: left; line-height: 1.45; }
+.linkish { margin-top: 14px; background: none; border: 0; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; text-decoration: underline; }
+.linkish:hover { color: var(--text); }
 
 /* Shell */
 .shell { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
@@ -149,7 +152,7 @@ textarea { resize: vertical; }
 .stat.hero .stat-label, .stat.hero .stat-sub { color: rgba(236, 238, 251, .75); }
 
 /* Cards */
-.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; align-items: start; gap: 14px; margin-bottom: 14px; }
 .card { padding: 18px 20px; }
 .view > .card + .card, .view > .card + .grid-2 { margin-top: 14px; }
 .card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }

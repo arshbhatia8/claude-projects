@@ -1,3 +1,9 @@
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.LedgerParser = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+'use strict';
+
 // Turns a bank / UPI / card / broker alert email into a transaction.
 // Heuristic by nature: built around the common Indian bank alert formats
 // ("Rs.500.00 debited from A/c XX1234 ... to VPA swiggy@icici") but tolerant
@@ -201,4 +207,5 @@ function parseTransactionEmail(mail) {
   return tx;
 }
 
-module.exports = { parseTransactionEmail, htmlToText };
+return { parseTransactionEmail, htmlToText };
+});
