@@ -120,6 +120,7 @@
 
         <article class="card glass">
           <div class="card-head"><h2>Gmail import <span class="badge">read-only</span></h2><span id="gmail-pill" class="pill"></span></div>
+          <p id="embed-note" class="notice hidden">This is the preview copy. Gmail import and file downloads only work on the GitHub Pages version of the app.</p>
           <p class="muted small">Reads bank, UPI, card and investment alert emails and turns them into transactions. It asks Google only for the <code>gmail.readonly</code> permission, so it <strong>cannot delete, send, archive or change</strong> any email.</p>
 
           <div id="gmail-connected" class="hidden">
@@ -237,6 +238,19 @@
         <span class="spacer"></span>
         <button type="button" class="btn ghost" data-close>Cancel</button>
         <button type="submit" class="btn primary" id="tx-save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="ask-dialog" class="dialog ask">
+    <form method="dialog" class="glass">
+      <h2 id="ask-title"></h2>
+      <p id="ask-message" class="muted"></p>
+      <label class="field hidden" id="ask-type-wrap"><span>Type <b id="ask-type-word"></b> to confirm</span><input id="ask-input" autocomplete="off" /></label>
+      <div class="dialog-foot">
+        <span class="spacer"></span>
+        <button class="btn ghost" value="cancel" id="ask-cancel">Cancel</button>
+        <button class="btn primary" value="ok" id="ask-ok">OK</button>
       </div>
     </form>
   </dialog>

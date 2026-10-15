@@ -89,6 +89,31 @@ function download(filename, text, type) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// In-app confirmation dialog (browser confirm()/prompt() are blocked in some embeds).
+function ask({ title, message, confirmText = 'OK', danger = false, typeToConfirm = '' }) {
+  const dlg = $('#ask-dialog');
+  $('#ask-title').textContent = title;
+  $('#ask-message').textContent = message;
+  const ok = $('#ask-ok');
+  ok.textContent = confirmText;
+  ok.classList.toggle('danger-solid', danger);
+  const input = $('#ask-input');
+  $('#ask-type-wrap').classList.toggle('hidden', !typeToConfirm);
+  $('#ask-type-word').textContent = typeToConfirm;
+  input.value = '';
+  ok.disabled = Boolean(typeToConfirm);
+  input.oninput = () => { ok.disabled = input.value.trim() !== typeToConfirm; };
+  dlg.returnValue = '';
+  dlg.showModal();
+  (typeToConfirm ? input : ok).focus();
+  return new Promise((resolve) => {
+    dlg.addEventListener('close', () => resolve(dlg.returnValue === 'ok'), { once: true });
+  });
+}
+
+// Inside an embedded preview (e.g. a claude.ai page) Google sign-in and downloads are blocked.
+const EMBEDDED = (() => { try { return window.self !== window.top; } catch { return true; } })();
+
 // ---------- auth ----------
 let authMode = 'login';
 async function boot() {
@@ -131,9 +156,15 @@ $('#auth-form').addEventListener('submit', async (e) => {
   }
 });
 
-$('#auth-reset').addEventListener('click', () => {
-  if (!confirm('Forgot your password? This deletes ALL data saved in this browser so you can start fresh. It cannot be undone.')) return;
-  if (prompt('Type DELETE to confirm') !== 'DELETE') return;
+$('#auth-reset').addEventListener('click', async () => {
+  const ok = await ask({
+    title: 'Start over?',
+    message: 'Without the password your data cannot be decrypted. Starting over deletes everything saved in this browser. This cannot be undone.',
+    confirmText: 'Delete everything',
+    danger: true,
+    typeToConfirm: 'DELETE',
+  });
+  if (!ok) return;
   Backend.resetEverything();
   showAuth('setup');
 });
@@ -318,7 +349,8 @@ $('#backup-btn').addEventListener('click', () => {
 $('#restore-input').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
-  if (!file || !confirm('Restore this backup? It replaces everything currently in the app.')) return;
+  if (!file) return;
+  if (!(await ask({ title: 'Restore backup?', message: 'This replaces everything currently in the app with the backup file.', confirmText: 'Restore' }))) return;
   try {
     const r = await Backend.importBackup(await file.text());
     state.meta = await api('/meta');
@@ -424,7 +456,8 @@ $('#tx-form').addEventListener('submit', async (e) => {
 });
 
 $('#tx-delete').addEventListener('click', async () => {
-  if (!state.editing || !confirm('Delete this transaction from the tracker? (Your emails are never touched.)')) return;
+  if (!state.editing) return;
+  if (!(await ask({ title: 'Delete transaction?', message: 'It is removed from the tracker only. Your emails are never touched.', confirmText: 'Delete', danger: true }))) return;
   await api(`/transactions/${state.editing.id}`, { method: 'DELETE' });
   dialog.close();
   toast('Deleted');
@@ -440,6 +473,7 @@ async function renderSettings() {
   $('#gmail-connected').classList.toggle('hidden', !connected);
   $('#gmail-setup').classList.toggle('hidden', connected);
   $('#js-origin').textContent = location.origin;
+  $('#embed-note').classList.toggle('hidden', !EMBEDDED);
   $('#g-client-id').value = s.googleClientId || '';
   if (!s.googleClientId) $('.steps').open = true;
   $('#gmail-filter').value = s.gmailFilter || '';
@@ -493,7 +527,7 @@ $('#sync-btn').addEventListener('click', async () => {
 });
 
 $('#disconnect-btn').addEventListener('click', async () => {
-  if (!confirm('Disconnect Gmail? Already imported transactions stay.')) return;
+  if (!(await ask({ title: 'Disconnect Gmail?', message: 'Transactions already imported stay in the tracker.', confirmText: 'Disconnect', danger: true }))) return;
   LedgerGmail.disconnect();
   await api('/settings', { method: 'PUT', body: { gmailEmail: null } });
   toast('Gmail disconnected');

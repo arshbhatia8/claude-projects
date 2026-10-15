@@ -77,6 +77,7 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: va
 .btn.ghost { background: var(--surface-2); border-color: var(--border); }
 .btn.ghost:hover { border-color: var(--border-strong); }
 .btn.danger { color: var(--debit); }
+.btn.danger-solid { background: linear-gradient(135deg, #e11d48, #f97316); box-shadow: none; }
 .btn.wide { width: 100%; }
 .icon-btn {
   width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2);
@@ -239,6 +240,10 @@ textarea { resize: vertical; }
 .invest-only { display: none; }
 .is-investment .invest-only { display: grid; }
 
+.dialog.ask { width: min(420px, calc(100% - 24px)); }
+.dialog.ask h2 { font-size: 18px; margin-bottom: 8px; }
+.dialog.ask p { margin: 0 0 14px; }
+.notice { font-size: 13px; padding: 10px 12px; border-radius: 12px; background: rgba(251, 191, 36, .1); border: 1px solid rgba(251, 191, 36, .3); color: #fcd34d; }
 .steps { margin: 6px 0 16px; font-size: 14px; }
 .steps summary { cursor: pointer; color: #93c5fd; font-weight: 600; }
 .steps ol { padding-left: 20px; color: var(--muted); }
