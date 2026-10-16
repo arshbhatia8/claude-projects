@@ -125,7 +125,10 @@ export function categoryName(id) {
 }
 
 const CAT_ICONS = [
-  [/food|dining|breakfast|lunch|dinner|tea|coffee|snack/i, 'food'],
+  [/food|dining|eating|breakfast|lunch|dinner|tea|coffee|snack/i, 'food'],
+  [/\bbills?\b|utilit/i, 'bolt-home'],
+  [/personal care|salon|groom/i, 'users'],
+  [/health|medic/i, 'alert'],
   [/grocer/i, 'cart'],
   [/travel|transport|cab|auto|petrol|fuel/i, 'car'],
   [/shop/i, 'bag'],
@@ -294,7 +297,7 @@ export async function submitting(form, fn) {
     return await fn();
   } catch (err) {
     showError(form, err);
-    if (!err.field && !(err.name === 'ValidationError')) console.error(err);
+    if (!err.field && err.name !== 'ValidationError' && !/^Not saved/.test(err.message || '')) console.error(err);
     return undefined;
   } finally {
     if (btn) btn.disabled = false;

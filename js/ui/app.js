@@ -4,6 +4,7 @@ import { app, actions, $, $$, esc, icon, toast, ask, sheet } from './dom.js';
 import { dashboard, transactions, quick, reports } from './views-main.js';
 import { assets, accounts, liabilities, goals } from './views-wealth.js';
 import { gmailView, settings } from './views-settings.js';
+import { initSmartEntry } from './smart-ui.js';
 
 const VIEWS = {
   dashboard: { ...dashboard, label: 'Dashboard', icon: 'home' },
@@ -258,8 +259,10 @@ async function requestPersistentStorage() {
   } catch { app.state.persisted = false; }
 }
 
+let smartReady = false;
 function enterApp() {
   requestPersistentStorage();
+  if (!smartReady) { initSmartEntry(); smartReady = true; }
   $('#lock').hidden = true;
   $('#shell').hidden = false;
   app.state.month = store.today().slice(0, 7);

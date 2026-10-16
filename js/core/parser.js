@@ -30,14 +30,17 @@ const KEYWORDS = {
 const FINANCIAL_SENDER = /(bank|alerts?@|upi|card|hdfc|icici|sbi|axis|kotak|yes ?bank|indusind|idfc|federal|rbl|au ?bank|paytm|phonepe|gpay|google ?pay|amazon ?pay|cred\b|groww|zerodha|kuvera|upstox|angel|cams|kfintech|nsdl|cdsl)/i;
 
 const CATEGORY_HINTS = [
-  [/swiggy|zomato|domino|pizza|mcdonald|kfc|starbucks|cafe|restaurant|eatsure|burger|dosa|idli|hotel saravana|chai/i, 'Food and Dining'],
+  [/swiggy|zomato|domino|pizza|mcdonald|kfc|starbucks|cafe|restaurant|eatsure|burger/i, 'Eating Out'],
   [/bigbasket|blinkit|zepto|grofers|dmart|jiomart|instamart|grocer|more retail|reliance fresh|nature'?s basket/i, 'Groceries'],
-  [/uber|ola\b|rapido|metro|irctc|redbus|fastag|parking|petrol|fuel|hpcl|bpcl|iocl|indian ?oil|makemytrip|goibibo|indigo|air ?india|cleartrip|yatra/i, 'Travel and Transport'],
+  [/uber|ola\b|rapido|metro|irctc|redbus|fastag|parking|petrol|fuel|hpcl|bpcl|iocl|indian ?oil|makemytrip|goibibo|indigo|air ?india|cleartrip|yatra/i, 'Transport'],
   [/amazon|flipkart|myntra|ajio|meesho|nykaa|tata ?cliq|croma|reliance digital/i, 'Shopping'],
-  [/netflix|spotify|prime video|hotstar|youtube|apple\.com|google play|jiocinema|sony ?liv|zee5|openai|chatgpt|airtel|jio\b|vodafone|bsnl|broadband|recharge/i, 'Subscriptions'],
-  [/electricity|bescom|tata power|adani electricity|msedcl|rent\b|nobroker|landlord/i, 'Rent and Electricity'],
+  [/netflix|spotify|prime video|hotstar|youtube|apple\.com|google play|jiocinema|sony ?liv|zee5|openai|chatgpt/i, 'Subscriptions'],
+  [/electricity|bescom|tata power|adani electricity|msedcl|water bill|gas bill|airtel|jio\b|vodafone|bsnl|broadband|recharge|bill ?desk|billpay/i, 'Bills'],
+  [/\brent\b|nobroker|landlord/i, 'Rent'],
+  [/hospital|pharma|apollo|medplus|1mg|netmeds|clinic|practo|doctor/i, 'Health'],
+  [/salon|spa\b|haircut|urban company/i, 'Personal Care'],
   [/udemy|coursera|byju|unacademy|school|college|tuition|course fee/i, 'Education'],
-  [/canva|adobe|figma|camera|mic\b|envato|epidemic sound/i, 'Content Creation'],
+  [/canva|adobe|figma|envato|epidemic sound/i, 'Content'],
 ];
 
 const PLATFORMS = /\b(zerodha|coin by zerodha|groww|kuvera|upstox|angel ?one|paytm money|et money|smallcase|indmoney|icici direct|hdfc securities|motilal|cams|kfintech|mf central)\b/i;

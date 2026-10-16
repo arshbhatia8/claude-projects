@@ -15,11 +15,43 @@ export const INCOME_CATEGORIES = [
   'Interest Income', 'Dividends', 'Refunds', 'Other Income',
 ];
 
-export const EXPENSE_CATEGORIES = [
-  'Rent and Electricity', 'Family Contribution', 'Food and Dining', 'Groceries', 'Travel and Transport',
-  'Shopping', 'Subscriptions', 'Credit Card Purchases', 'Education', 'Content Creation',
-  'Personal Expenses', 'Other Expenses',
+// Short, one- or two-word expense categories. `quick` ones are the tiles on
+// the Quick Add screen (customisable in Settings → Categories). Individual
+// items such as "Dosa" or "Samosa" belong in a transaction's description, never
+// in a category name. Ids are stable: older vaults keep their ids and only the
+// display names change during migration, so past transactions stay linked.
+export const EXPENSE_CATEGORY_DEFS = [
+  { id: 'cat_ex_breakfast', name: 'Breakfast', quick: true, examples: 'Dosa, Idli, Poha, Paratha' },
+  { id: 'cat_ex_lunch', name: 'Lunch', quick: true, examples: 'Thali, Biryani, Meals' },
+  { id: 'cat_ex_snacks', name: 'Snacks', quick: true, examples: 'Samosa, Tea, Coffee' },
+  { id: 'cat_ex_dinner', name: 'Dinner', quick: true, examples: 'Roti, Rice, Pizza' },
+  { id: 'cat_ex_groceries', name: 'Groceries', quick: true, examples: 'Milk, Vegetables, Rice' },
+  { id: 'cat_ex_travel_and_transport', name: 'Transport', quick: true, examples: 'Auto, Cab, Metro, Petrol' },
+  { id: 'cat_ex_shopping', name: 'Shopping', quick: true, examples: 'Clothes, Shoes, Amazon' },
+  { id: 'cat_ex_bills', name: 'Bills', quick: true, examples: 'Electricity, Mobile, Wi-Fi' },
+  { id: 'cat_ex_personal_care', name: 'Personal Care', quick: true, examples: 'Haircut, Salon, Toiletries' },
+  { id: 'cat_ex_other_expenses', name: 'Other Expenses', quick: true, examples: '' },
+  { id: 'cat_ex_food_and_dining', name: 'Eating Out', quick: false, examples: 'Swiggy, Zomato, Café' },
+  { id: 'cat_ex_rent_and_electricity', name: 'Rent', quick: false, examples: '' },
+  { id: 'cat_ex_family_contribution', name: 'Family', quick: false, examples: '' },
+  { id: 'cat_ex_subscriptions', name: 'Subscriptions', quick: false, examples: 'Netflix, Spotify' },
+  { id: 'cat_ex_health', name: 'Health', quick: false, examples: 'Medicines, Doctor' },
+  { id: 'cat_ex_education', name: 'Education', quick: false, examples: 'Course, Books' },
+  { id: 'cat_ex_content_creation', name: 'Content', quick: false, examples: 'Camera, Software' },
 ];
+export const EXPENSE_CATEGORIES = EXPENSE_CATEGORY_DEFS.map((c) => c.name);
+
+// Names used by schema-v2 vaults, renamed in place by the v3 migration when
+// the user had not renamed them already.
+export const V2_CATEGORY_RENAMES = {
+  cat_ex_travel_and_transport: ['Travel and Transport', 'Transport'],
+  cat_ex_rent_and_electricity: ['Rent and Electricity', 'Rent'],
+  cat_ex_family_contribution: ['Family Contribution', 'Family'],
+  cat_ex_content_creation: ['Content Creation', 'Content'],
+  cat_ex_food_and_dining: ['Food and Dining', 'Eating Out'],
+  cat_ex_credit_card_purchases: ['Credit Card Purchases', 'Card Purchases'],
+  cat_ex_personal_expenses: ['Personal Expenses', 'Personal'],
+};
 
 export const PAYMENT_METHODS = ['UPI', 'Debit Card', 'Credit Card', 'Net Banking', 'Cash', 'Wallet', 'Cheque', 'Auto-debit', 'Other'];
 
@@ -65,20 +97,22 @@ export const DATE_FORMATS = {
   'YYYY-MM-DD': '2026-10-15',
 };
 
-// Optional quick-add shortcuts. Added only when the user asks for them.
-export const SUGGESTED_TEMPLATES = [
-  { name: 'Breakfast – Dosa', category: 'Food and Dining', amount: 6000, pinned: true },
-  { name: 'Breakfast – Idli', category: 'Food and Dining', amount: 5000 },
-  { name: 'Breakfast – Other', category: 'Food and Dining', amount: null },
-  { name: 'Lunch', category: 'Food and Dining', amount: null, pinned: true },
-  { name: 'Dinner', category: 'Food and Dining', amount: null },
-  { name: 'Tea / Coffee', category: 'Food and Dining', amount: 2000, pinned: true },
-  { name: 'Snacks', category: 'Food and Dining', amount: null },
-  { name: 'Groceries', category: 'Groceries', amount: null, pinned: true },
-  { name: 'Cab / Auto', category: 'Travel and Transport', amount: null },
-  { name: 'Petrol', category: 'Travel and Transport', amount: null },
-  { name: 'Shopping', category: 'Shopping', amount: null },
-];
+// Templates that older versions offered as "suggested". The v3 migration turns
+// them into category-based shortcuts (e.g. "Breakfast – Dosa" becomes category
+// Breakfast + description "Dosa") or removes them if they were never used.
+export const V2_SUGGESTED_TEMPLATES = {
+  'Breakfast – Dosa': { category: 'cat_ex_breakfast', name: 'Dosa', description: 'Dosa' },
+  'Breakfast – Idli': { category: 'cat_ex_breakfast', name: 'Idli', description: 'Idli' },
+  'Breakfast – Other': { category: 'cat_ex_breakfast', name: 'Breakfast', description: '' },
+  Lunch: { category: 'cat_ex_lunch', name: 'Lunch', description: '' },
+  Dinner: { category: 'cat_ex_dinner', name: 'Dinner', description: '' },
+  'Tea / Coffee': { category: 'cat_ex_snacks', name: 'Tea / Coffee', description: 'Tea / Coffee' },
+  Snacks: { category: 'cat_ex_snacks', name: 'Snacks', description: '' },
+  Groceries: { category: 'cat_ex_groceries', name: 'Groceries', description: '' },
+  'Cab / Auto': { category: 'cat_ex_travel_and_transport', name: 'Cab / Auto', description: 'Cab / Auto' },
+  Petrol: { category: 'cat_ex_travel_and_transport', name: 'Petrol', description: 'Petrol' },
+  Shopping: { category: 'cat_ex_shopping', name: 'Shopping', description: '' },
+};
 
 export function slug(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
@@ -87,7 +121,7 @@ export function slug(s) {
 export function defaultCategories() {
   const cats = [];
   for (const name of INCOME_CATEGORIES) cats.push({ id: `cat_in_${slug(name)}`, kind: 'income', name, parentId: null, archived: false });
-  for (const name of EXPENSE_CATEGORIES) cats.push({ id: `cat_ex_${slug(name)}`, kind: 'expense', name, parentId: null, archived: false });
+  for (const c of EXPENSE_CATEGORY_DEFS) cats.push({ id: c.id, kind: 'expense', name: c.name, parentId: null, archived: false, quick: c.quick });
   return cats;
 }
 
@@ -140,7 +174,10 @@ export function buildDemoData(today) {
     t(day(cur, clampDay(3)), 'expense', 1400000, { description: 'Rent + electricity', categoryId: c('Rent and Electricity'), from: { kind: 'account', id: 'demo_acc_bank' }, paymentMethod: 'Net Banking' }),
     t(day(cur, clampDay(5)), 'expense', 300000, { description: 'Sent home', categoryId: c('Family Contribution'), from: { kind: 'account', id: 'demo_acc_bank' }, paymentMethod: 'UPI' }),
     t(day(cur, clampDay(8)), 'expense', 250000, { description: 'Swiggy & cafés', categoryId: c('Food and Dining'), from: { kind: 'liability', id: 'demo_lia_card' }, paymentMethod: 'Credit Card' }),
-    t(day(cur, clampDay(9)), 'expense', 170000, { description: 'Breakfast – Dosa (month)', categoryId: c('Food and Dining'), from: { kind: 'account', id: 'demo_acc_cash' }, paymentMethod: 'Cash' }),
+    t(day(cur, clampDay(9)), 'expense', 40000, { description: 'Dosa', categoryId: c('Breakfast'), from: { kind: 'account', id: 'demo_acc_cash' }, paymentMethod: 'Cash' }),
+    t(day(cur, clampDay(10)), 'expense', 30000, { description: 'Idli', categoryId: c('Breakfast'), from: { kind: 'account', id: 'demo_acc_cash' }, paymentMethod: 'Cash' }),
+    t(day(cur, clampDay(10)), 'expense', 30000, { description: 'Samosa', categoryId: c('Snacks'), from: { kind: 'account', id: 'demo_acc_cash' }, paymentMethod: 'Cash' }),
+    t(day(cur, clampDay(11)), 'expense', 70000, { description: 'Thali', categoryId: c('Lunch'), from: { kind: 'account', id: 'demo_acc_cash' }, paymentMethod: 'UPI' }),
     t(day(cur, clampDay(11)), 'expense', 240000, { description: 'Groceries', categoryId: c('Groceries'), from: { kind: 'account', id: 'demo_acc_bank' }, paymentMethod: 'UPI' }),
     t(day(cur, clampDay(12)), 'expense', 125100, { description: 'Cab / Auto', categoryId: c('Travel and Transport'), from: { kind: 'account', id: 'demo_acc_bank' }, paymentMethod: 'UPI' }),
     t(day(cur, clampDay(13)), 'expense', 64900, { description: 'Netflix', categoryId: c('Subscriptions'), from: { kind: 'liability', id: 'demo_lia_card' }, paymentMethod: 'Credit Card' }),

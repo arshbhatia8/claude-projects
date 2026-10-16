@@ -505,7 +505,7 @@ dialog { color: var(--text); }
   .icon-btn.sm svg { width: 18px; height: 18px; }
   .btn-sm { min-height: 40px; padding: 0 14px; }
   .chip { min-height: 40px; }
-  .link-btn { min-height: 44px; }
+  .link-btn { min-height: 44px; min-width: 44px; }
   input[type="checkbox"], input[type="radio"] { width: 24px; height: 24px; }
   .check { min-height: 44px; }
 }
@@ -564,3 +564,37 @@ dialog { color: var(--text); }
   .tabbar .tab-fab { width: 46px; height: 46px; margin-top: -14px; }
   .tabbar span { display: none; }
 }
+
+/* =========================================================================
+   Smart Entry, category tiles, drill-down
+   ========================================================================= */
+.smart-bar { display: flex; gap: 8px; }
+.smart-input {
+  flex: 1; min-width: 0; min-height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 16px;
+  border-radius: 18px; border: 1px dashed var(--line-strong); background: var(--surface); color: var(--muted);
+  font: inherit; font-size: 15px; text-align: left; cursor: text;
+}
+.smart-input svg { color: var(--accent); }
+.smart-input span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.smart-mic { width: 52px; height: 52px; flex: none; border-radius: 18px; border: 0; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; cursor: pointer; }
+.smart-mic svg { width: 22px; height: 22px; }
+#smart-mic.recording { background: var(--expense); color: #fff; border-color: transparent; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--expense) 25%, transparent); } }
+.smart-voice-row { flex-wrap: nowrap; align-items: center; }
+.smart-voice-row .btn { flex: none; }
+.smart-examples { flex-wrap: nowrap; }
+.smart-examples .chip { font-weight: 600; }
+.smart-intro { display: grid; gap: 6px; padding: 12px 14px; border-radius: 16px; background: var(--accent-soft); }
+.smart-quote { font-weight: 600; word-break: break-word; }
+.smart-summary { display: flex; gap: 8px; align-items: flex-start; }
+.smart-summary svg { color: var(--accent); width: 18px; height: 18px; margin-top: 2px; }
+.smart-q, .smart-n { margin: 0; padding-left: 18px; font-size: 13px; display: grid; gap: 2px; }
+.smart-q li { color: var(--warn); }
+.smart-n li { color: var(--muted); }
+.cat-tile { min-height: 96px; }
+.cat-tile .tpl-name { padding-right: 0; }
+.desc-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: -4px; }
+.desc-chips .chip { gap: 6px; min-height: 40px; }
+.bar-link { width: 100%; background: none; border: 0; padding: 4px 0; text-align: left; color: inherit; font: inherit; cursor: pointer; border-radius: 10px; }
+.bar-link:hover .bar-top span:first-child { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { #smart-mic.recording { animation: none; } }

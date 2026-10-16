@@ -1,9 +1,9 @@
 // Every add / edit form, shown in the bottom sheet.
 import {
-  app, esc, icon, money, moneyText, fmtDate, toast, ask, sheet, readForm, submitting, $, $$,
+  app, esc, icon, money, moneyText, fmtDate, toast, ask, sheet, readForm, submitting, $, $$, isRevealed,
   endpointOptions, parseRef, categoryOptions, subcategoryOptions, categoryName, refName, TYPE_ICON, categoryIcon,
 } from './dom.js';
-import { TX_TYPES, PAYMENT_METHODS, ACCOUNT_TYPES, ASSET_TYPES, ASSET_STATUS, LIABILITY_TYPES, GOAL_KINDS } from '../core/defaults.js';
+import { TX_TYPES, PAYMENT_METHODS, ACCOUNT_TYPES, ASSET_TYPES, ASSET_STATUS, LIABILITY_TYPES, GOAL_KINDS, EXPENSE_CATEGORY_DEFS } from '../core/defaults.js';
 import { toInputValue, formatINR } from '../core/money.js';
 import { reversibleAmount } from '../core/ledger.js';
 
@@ -36,19 +36,62 @@ const TO_LABEL = { income: 'Received in', refund: 'Refunded to', transfer: 'To',
 // Transaction form
 // ---------------------------------------------------------------------------
 
+function descriptionPlaceholder(type, categoryId) {
+  if (type === 'income') return 'e.g. October salary';
+  const def = EXPENSE_CATEGORY_DEFS.find((d) => d.id === categoryId);
+  if (def?.examples) return `What exactly? e.g. ${def.examples}`;
+  return 'What was it for?';
+}
+
+/** Your recent descriptions in this category, newest first — tap to fill (no template needed). */
+function descriptionChips(type, categoryId) {
+  if (!categoryId || !['expense', 'income'].includes(type)) return '';
+  const seen = new Map();
+  const catName = categoryName(categoryId).toLowerCase();
+  const list = S().db.transactions
+    .filter((t) => t.categoryId === categoryId && t.description && t.type === type)
+    .sort((a, b) => (a.date === b.date ? (a.createdAt < b.createdAt ? 1 : -1) : a.date < b.date ? 1 : -1));
+  for (const t of list) {
+    const key = t.description.trim().toLowerCase();
+    if (key === catName || seen.has(key)) continue;
+    seen.set(key, t);
+    if (seen.size >= 8) break;
+  }
+  if (!seen.size) return '';
+  return `<div class="full desc-chips" role="group" aria-label="Recent descriptions"><span class="tiny muted">Recent:</span>${[...seen.values()]
+    .map((t) => `<button type="button" class="chip" data-desc="${esc(t.description)}"${isRevealed() ? ` data-amt="${esc(toInputValue(t.amount))}"` : ''} aria-pressed="false">${esc(t.description)}<span class="tiny muted">${esc(moneyText(t.amount))}</span></button>`)
+    .join('')}</div>`;
+}
+
+/** Quick Add for a category: Category fixed (changeable), Description free text, Amount, Date = today. */
+export function openCategoryEntry(categoryId) {
+  const c = S().db.categories.find((x) => x.id === categoryId);
+  if (!c) return;
+  const type = c.kind === 'income' ? 'income' : 'expense';
+  openTxForm({
+    title: c.name,
+    lockType: true,
+    draftKey: `tx:cat:${c.id}`,
+    intro: `<p class="muted small" style="text-align:center">${esc(TX_TYPES[type].label)} in <b>${esc(c.name)}</b> · type what it was in Description · nothing is saved until you tap ${esc(TX_TYPES[type].verb)}</p>`,
+    values: { type, categoryId: c.id, date: S().today() },
+    focus: 'description',
+  });
+}
+
 /**
  * mode: 'new' | 'edit' | 'gmail' | 'reversal'
  * values: prefill (transaction-shaped), template: quick-add template used, candidate: Gmail import being edited
  */
-export function openTxForm({ mode = 'new', values = {}, template = null, candidate = null, original = null } = {}) {
+export function openTxForm({ mode = 'new', values = {}, template = null, candidate = null, original = null, title: titleOverride = '', intro = '', lockType = false, draftKey = null, saveLabel = '', focus = 'amount' } = {}) {
   const store = S();
   let type = values.type || 'expense';
   const isReversal = mode === 'reversal';
   if (isReversal) type = 'reversal';
-  const title = template ? template.name : mode === 'edit' ? 'Edit transaction' : mode === 'gmail' ? 'Review import' : isReversal ? 'Reverse transaction' : 'Add transaction';
+  const title = titleOverride || (template ? template.name : mode === 'edit' ? 'Edit transaction' : mode === 'gmail' ? 'Review import' : isReversal ? 'Reverse transaction' : 'Add transaction');
+  const draft = draftKey && mode === 'new' ? store.getDraft(draftKey) : null;
   const maxReverse = isReversal ? reversibleAmount(store.db, original.id) : 0;
 
-  const typeChips = isReversal || template
+  const typeChips = isReversal || template || lockType
     ? ''
     : `<div class="type-toggle" role="radiogroup" aria-label="Transaction type">${['expense', 'income', 'transfer', 'investment', 'refund']
         .map((t) => `<button type="button" class="chip" data-type="${t}" role="radio" aria-pressed="${t === type}">${icon(TYPE_ICON[t])}${TX_TYPES[t].label}</button>`)
@@ -59,6 +102,8 @@ export function openTxForm({ mode = 'new', values = {}, template = null, candida
       ${typeChips}
       ${isReversal ? `<div class="notice">${icon('undo')}<div>Reversing <b>${esc(original.description)}</b> (${esc(TX_TYPES[original.type].label)}, ${esc(fmtDate(original.date))}). Up to <b>${esc(formatINR(maxReverse))}</b> can still be reversed. The reversal undoes its effect on balances and reports.</div></div>` : ''}
       ${template ? `<p class="muted small" style="text-align:center">${esc(TX_TYPES[type].label)} from your template · nothing is saved until you tap ${esc(TX_TYPES[type].verb)}</p>` : ''}
+      ${intro}
+      ${draft ? `<div class="notice" id="draft-note">${icon('refresh')}<div style="flex:1">You have an unsaved entry from ${esc(new Date(draft.updatedAt).toLocaleString())}.<div class="row" style="margin-top:8px"><button type="button" class="btn btn-primary btn-sm" id="draft-restore">Restore it</button><button type="button" class="btn btn-ghost btn-sm" id="draft-discard">Discard</button></div></div></div>` : ''}
       ${candidate ? `<div class="notice">${icon('mail')}<div><b>${esc(candidate.subject)}</b><br><span class="tiny muted">${esc(candidate.sender)} · ${esc(fmtDate(candidate.emailDate))}</span></div></div>` : ''}
       <div class="amount-box field">
         <span>Amount</span>
@@ -69,7 +114,7 @@ export function openTxForm({ mode = 'new', values = {}, template = null, candida
       <p class="form-error" role="alert"></p>
       <div class="sheet-foot">
         <button type="button" class="btn btn-ghost" data-act="close-sheet">Cancel</button>
-        <button type="submit" class="btn btn-primary" id="tx-save">${esc(mode === 'gmail' ? 'Approve & import' : TX_TYPES[type].verb)}</button>
+        <button type="submit" class="btn btn-primary" id="tx-save">${esc(saveLabel || (mode === 'gmail' ? 'Approve & import' : TX_TYPES[type].verb))}</button>
       </div>
     </form>`;
 
@@ -87,7 +132,10 @@ export function openTxForm({ mode = 'new', values = {}, template = null, candida
         const cat = usesCategory ? state.categoryId : null;
         const hasSubs = cat && store.db.categories.some((c) => c.parentId === cat && !c.archived);
         const showTemplate = mode === 'new' && !template && !isReversal;
+        const descHtml = `${field('Description', `<input name="description" maxlength="200" autocomplete="off" autocapitalize="sentences" enterkeyhint="done" value="${esc(state.description || '')}" placeholder="${esc(descriptionPlaceholder(type, cat))}" />`, { full: true })}
+          ${descriptionChips(type, cat)}`;
         $('#tx-fields', form).innerHTML = `
+          ${focus === 'description' ? descHtml : ''}
           ${usesCategory ? field(type === 'refund' ? 'Refund for (category)' : 'Category', `<select name="categoryId">${categoryOptions(catKind, cat, { blank: 'Choose…' })}</select>`) : ''}
           ${hasSubs ? field('Subcategory', `<select name="subcategoryId">${subcategoryOptions(cat, state.subcategoryId)}</select>`) : ''}
           ${fromKinds ? field(FROM_LABEL[type], `<select name="from">${endpointOptions(fromKinds, state.from, { blank: type === 'transfer' ? 'Choose…' : 'Not linked to an account' })}</select>`, { hint: type === 'expense' ? 'Pick a credit card to record a card purchase' : '' }) : ''}
@@ -101,7 +149,7 @@ export function openTxForm({ mode = 'new', values = {}, template = null, candida
               <input type="date" name="date" value="${esc(state.date || store.today())}" aria-label="Date" style="flex:1;min-width:0" />
             </div>
           </div>
-          ${field('Description', `<input name="description" maxlength="200" autocomplete="off" enterkeyhint="done" value="${esc(state.description || '')}" placeholder="${type === 'income' ? 'e.g. October salary' : 'e.g. Masala dosa'}" />`, { full: true })}
+          ${focus === 'description' ? '' : descHtml}
           <details class="more-fields" ${state.moreOpen || state.time || state.notes || state.externalRef ? 'open' : ''}>
             <summary class="small"><b>More details</b><span class="muted">&nbsp;· time, payment method, notes${showTemplate ? ', save as template' : ''}</span></summary>
             <div class="form-grid">
@@ -123,6 +171,17 @@ export function openTxForm({ mode = 'new', values = {}, template = null, candida
       const capture = () => Object.assign(state, readForm(form), { from: parseRef(form.from?.value), to: parseRef(form.to?.value), moreOpen: Boolean($('.more-fields', form)?.open) });
 
       form.addEventListener('click', (e) => {
+        const d = e.target.closest('[data-desc]');
+        if (d) {
+          form.elements.description.value = d.dataset.desc;
+          if (!form.elements.amount.value && d.dataset.amt) {
+            form.elements.amount.value = d.dataset.amt;
+            form.elements.amount.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          $$('[data-desc]', form).forEach((c) => c.setAttribute('aria-pressed', String(c === d)));
+          updateConfirm();
+          return;
+        }
         const chip = e.target.closest('[data-date]');
         if (!chip) return;
         form.elements.date.value = chip.dataset.date;
@@ -164,7 +223,37 @@ export function openTxForm({ mode = 'new', values = {}, template = null, candida
       form.addEventListener('input', (e) => {
         if (e.target.name === 'date') $$('[data-date]', form).forEach((c) => c.setAttribute('aria-pressed', String(c.dataset.date === e.target.value)));
         updateConfirm();
+        queueDraft();
       });
+
+      // Unsaved input is kept as a draft (≥30 days) so a reload, a crash or a
+      // failed save does not lose it. Cancel discards it; tapping outside keeps it.
+      let draftTimer;
+      const queueDraft = () => {
+        if (!draftKey || mode !== 'new') return;
+        clearTimeout(draftTimer);
+        draftTimer = setTimeout(() => {
+          const v = readForm(form);
+          if (!v.amount && !v.description && !v.notes) return;
+          const { saveTemplate, templateName, ...data } = v;
+          store.saveDraft(draftKey, { ...data, type }).catch(() => {});
+        }, 700);
+      };
+      form.addEventListener('change', queueDraft);
+      $('[data-act="close-sheet"]', form)?.addEventListener('click', () => { clearTimeout(draftTimer); if (draftKey) store.discardDraft(draftKey).catch(() => {}); });
+      $('#draft-restore', form)?.addEventListener('click', () => {
+        const d = draft.data;
+        Object.assign(state, d, { from: parseRef(d.from), to: parseRef(d.to) });
+        if (d.type && d.type !== type && !lockType && !template) {
+          type = d.type;
+          $$('[data-type]', form).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.type === type)));
+        }
+        form.elements.amount.value = d.amount || '';
+        form.elements.amount.dispatchEvent(new Event('input', { bubbles: true }));
+        $('#draft-note', form).remove();
+        renderFields();
+      });
+      $('#draft-discard', form)?.addEventListener('click', () => { store.discardDraft(draftKey).catch(() => {}); $('#draft-note', form).remove(); });
 
       form.addEventListener('submit', (e) => {
         e.preventDefault();
@@ -190,6 +279,8 @@ export function openTxForm({ mode = 'new', values = {}, template = null, candida
           const saveAs = v.saveTemplate ? { name: v.templateName || v.description } : null;
           if (saveAs && !saveAs.name) throw Object.assign(new Error('Give the template a name'), { field: 'templateName' });
           const res = await store.createTransaction(input, { templateId: template?.id || null, saveAsTemplate: saveAs });
+          clearTimeout(draftTimer);
+          if (draftKey) await store.discardDraft(draftKey).catch(() => {});
           let msg = `${TX_TYPES[type].label} saved`;
           if (res.template) msg += ' · template created';
           if (res.templateExists) msg += ' · a template with that name already exists';
@@ -203,7 +294,8 @@ export function openTxForm({ mode = 'new', values = {}, template = null, candida
       const fit = () => { amountInput.style.width = `${Math.max(2, (amountInput.value || amountInput.placeholder).length) + 0.6}ch`; };
       amountInput.addEventListener('input', fit);
       fit();
-      if (!amountInput.value) amountInput.focus();
+      if (focus === 'description' && !form.elements.description.value) form.elements.description.focus();
+      else if (!amountInput.value) amountInput.focus();
     },
   });
 }
@@ -361,7 +453,7 @@ export function openAccountForm(existing = null) {
 }
 
 /** Reconcile an account / liability, or record an asset valuation. */
-export function openSnapshotForm(kind, item, current) {
+export function openSnapshotForm(kind, item, current, { value = null, date = '', intro = '' } = {}) {
   const label = kind === 'asset' ? 'Current value' : kind === 'liability' ? 'Outstanding amount' : 'Actual balance';
   const title = kind === 'asset' ? `Update value — ${item.name}` : kind === 'liability' ? `Update outstanding — ${item.name}` : `Adjust balance — ${item.name}`;
   const explain = kind === 'asset'
@@ -370,11 +462,12 @@ export function openSnapshotForm(kind, item, current) {
   const history = S().db.snapshots.filter((s) => s.kind === kind && s.refId === item.id).sort((a, b) => (a.date < b.date ? 1 : -1));
   const html = `
     <form class="form" id="snap-form" novalidate>
+      ${intro}
       <p class="muted small">${esc(explain)}</p>
       <div class="card-flat row"><span class="muted small">Spendly currently shows</span><span class="spacer"></span><b>${money(current)}</b></div>
       <div class="form-grid">
-        ${field(label, `<input name="value" inputmode="decimal" autocomplete="off" placeholder="0" />`)}
-        ${field('As of', `<input type="date" name="date" value="${esc(S().today())}" />`)}
+        ${field(label, `<input name="value" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(toInputValue(value))}" />`)}
+        ${field('As of', `<input type="date" name="date" value="${esc(date || S().today())}" />`)}
         ${field('Note (optional)', `<input name="note" maxlength="200" placeholder="e.g. From bank app" />`, { full: true })}
       </div>
       <p class="form-error" role="alert"></p>
@@ -386,7 +479,7 @@ export function openSnapshotForm(kind, item, current) {
     html,
     onMount(root) {
       const form = $('#snap-form', root);
-      form.value.focus();
+      if (!form.elements.value.value) form.elements.value.focus();
       form.addEventListener('submit', (e) => {
         e.preventDefault();
         submitting(form, async () => {
@@ -421,15 +514,18 @@ const ASSET_FIELDS = {
   liquid: ['other_asset'],
 };
 
-export function openAssetForm(existing = null, presetType = null) {
+export function openAssetForm(existing = null, presetType = null, { values = null, funding = null, intro = '' } = {}) {
   const store = S();
-  const v = existing || { type: presetType || 'fd', status: 'active', openedOn: store.today() };
+  const v = existing || { type: presetType || 'fd', status: 'active', openedOn: store.today(), ...(values || {}) };
+  const fund = funding || {};
+  const fundMode = fund.mode === 'account' || fund.mode === 'ask' ? 'account' : 'existing';
   const accounts = store.db.accounts.filter((a) => !a.archived);
   const show = (name) => `data-show="${ASSET_FIELDS[name].join(' ')}"`;
   const f = (name, label, inner, opts = {}) => `<label class="field${opts.full ? ' full' : ''}" ${show(name)}><span>${esc(label)}</span>${inner}${opts.hint ? `<span class="hint">${esc(opts.hint)}</span>` : ''}</label>`;
   const accountOpts = (sel) => `<option value="">None</option>` + accounts.map((a) => opt(a.id, a.name, sel)).join('');
   const html = `
     <form class="form" id="asset-form" novalidate>
+      ${intro}
       <div class="notice">${icon('alert')}<div>Values here are maintained by you. Spendly never connects to banks, brokers or live prices.</div></div>
       <div class="form-grid">
         ${field('Asset type', `<select name="type">${Object.entries(ASSET_TYPES).map(([k, t]) => opt(k, t.label, v.type)).join('')}</select>`, { hint: 'Bank balances and cash in hand go under Bank Accounts & Cash' })}
@@ -467,16 +563,16 @@ export function openAssetForm(existing = null, presetType = null) {
         </details>` : `
         <fieldset class="card-flat form" style="border:0;margin:0">
           <legend class="small" style="font-weight:700;padding:0 0 8px">How is it funded?</legend>
-          <label class="check"><input type="radio" name="fundingMode" value="existing" checked /> I already own it — record its current value</label>
-          <label class="check"><input type="radio" name="fundingMode" value="account" ${accounts.length ? '' : 'disabled'} /> Paid now from one of my accounts${accounts.length ? '' : ' (add an account first)'}</label>
+          <label class="check"><input type="radio" name="fundingMode" value="existing" ${fundMode === 'existing' ? 'checked' : ''} /> I already own it — record its current value</label>
+          <label class="check"><input type="radio" name="fundingMode" value="account" ${accounts.length ? '' : 'disabled'} ${fundMode === 'account' && accounts.length ? 'checked' : ''} /> Paid now from one of my accounts${accounts.length ? '' : ' (add an account first)'}</label>
           <div class="form-grid" id="fund-existing">
-            ${field('Amount invested', `<input name="invested" inputmode="decimal" placeholder="0" />`, { hint: 'Your cost basis' })}
-            ${field('Current value', `<input name="value" inputmode="decimal" placeholder="Same as invested" />`)}
+            ${field('Amount invested', `<input name="invested" inputmode="decimal" placeholder="0" value="${esc(toInputValue(fund.invested ?? null))}" />`, { hint: 'Your cost basis' })}
+            ${field('Current value', `<input name="value" inputmode="decimal" placeholder="Same as invested" value="${esc(toInputValue(fund.value ?? null))}" />`)}
           </div>
           <div class="form-grid" id="fund-account" hidden>
-            ${field('From account', `<select name="fundingAccount">${accountOpts('')}</select>`)}
-            ${field('Amount', `<input name="fundingAmount" inputmode="decimal" placeholder="0" />`, { hint: 'Moves money out of the account — no expense is recorded' })}
-            ${field('Date', `<input type="date" name="fundingDate" value="${esc(store.today())}" />`)}
+            ${field('From account', `<select name="fundingAccount">${accountOpts(fund.accountId || '')}</select>`)}
+            ${field('Amount', `<input name="fundingAmount" inputmode="decimal" placeholder="0" value="${esc(toInputValue(fund.amount ?? null))}" />`, { hint: 'Moves money out of the account — no expense is recorded' })}
+            ${field('Date', `<input type="date" name="fundingDate" value="${esc(fund.date || store.today())}" />`)}
           </div>
         </fieldset>`}
       <p class="form-error" role="alert"></p>
@@ -513,20 +609,21 @@ export function openAssetForm(existing = null, presetType = null) {
           done('Asset added');
         });
       });
-      if (!existing) form.elements.name.focus();
+      if (!existing && !form.elements.name.value) form.elements.name.focus();
     },
   });
 }
 
-export function openCloseAssetForm(asset) {
+export function openCloseAssetForm(asset, { amountReceived = null, date = '', accountId = null, intro = '' } = {}) {
   const accounts = S().db.accounts.filter((a) => !a.archived);
   const html = `
     <form class="form" id="close-form" novalidate>
+      ${intro}
       <p class="muted small">The recorded value (${esc(moneyText(asset.value))}) moves back to the payout account as a transfer. Anything received above it is recorded as Interest Income. If you receive less (e.g. a premature-closure penalty), the asset's value is written down instead of counting as spending.</p>
       <div class="form-grid">
-        ${field('Paid out to', `<select name="accountId">${accounts.map((a) => opt(a.id, a.name, asset.linkedAccountId)).join('')}</select>`)}
-        ${field('Total amount received', `<input name="amountReceived" inputmode="decimal" value="${esc(toInputValue(asset.maturityAmount || asset.value))}" />`)}
-        ${field('Date', `<input type="date" name="date" value="${esc(S().today())}" />`)}
+        ${field('Paid out to', `<select name="accountId">${accounts.map((a) => opt(a.id, a.name, accountId || asset.linkedAccountId)).join('')}</select>`)}
+        ${field('Total amount received', `<input name="amountReceived" inputmode="decimal" value="${esc(toInputValue(amountReceived ?? (asset.maturityAmount || asset.value)))}" />`)}
+        ${field('Date', `<input type="date" name="date" value="${esc(date || S().today())}" />`)}
         ${field('New status', `<select name="status">${opt('matured', 'Matured', 'matured')}${opt('closed', 'Closed early', '')}</select>`)}
       </div>
       ${accounts.length ? '' : `<div class="notice warn">${icon('alert')}<div>Add a bank account first so the payout has somewhere to go.</div></div>`}
@@ -553,11 +650,12 @@ export function openCloseAssetForm(asset) {
 // Liabilities, goals
 // ---------------------------------------------------------------------------
 
-export function openLiabilityForm(existing = null) {
-  const v = existing || { type: 'credit_card' };
+export function openLiabilityForm(existing = null, prefill = null, intro = '') {
+  const v = existing || { type: 'credit_card', ...(prefill || {}) };
   const accounts = S().db.accounts.filter((a) => !a.archived || a.id === v.linkedAccountId);
   const html = `
     <form class="form" id="lia-form" novalidate>
+      ${intro}
       <div class="form-grid">
         ${field('Name', `<input name="name" maxlength="60" value="${esc(v.name || '')}" placeholder="e.g. HDFC Millennia card" />`, { full: true })}
         ${field('Type', `<select name="type">${Object.entries(LIABILITY_TYPES).map(([k, l]) => opt(k, l, v.type)).join('')}</select>`)}
@@ -644,6 +742,7 @@ export function openCategoryManager(kind = 'expense') {
         ${isSub ? '' : `<span class="tx-ico" style="width:32px;height:32px">${icon(categoryIcon(c.name))}</span>`}
         <input class="cat-name" data-id="${esc(c.id)}" value="${esc(c.name)}" maxlength="60" aria-label="Category name" style="flex:1;min-width:120px" />
         ${c.archived ? '<span class="badge">Archived</span>' : ''}
+        ${!isSub && kind === 'expense' ? `<label class="check tiny" style="min-height:32px"><input type="checkbox" data-quick="${esc(c.id)}" ${c.quick ? 'checked' : ''} ${c.archived ? 'disabled' : ''}/> Quick Add</label>` : ''}
         ${isSub ? '' : `<button type="button" class="icon-btn sm" data-sub="${esc(c.id)}" title="Add subcategory" aria-label="Add subcategory to ${esc(c.name)}">${icon('plus')}</button>`}
         <button type="button" class="btn btn-ghost btn-sm" data-archive="${esc(c.id)}">${c.archived ? 'Restore' : 'Archive'}</button>
       </li>`;
@@ -653,10 +752,22 @@ export function openCategoryManager(kind = 'expense') {
         <p class="muted small">Rename by editing a name (saved when you leave the field). Archived categories stay on past transactions but are hidden from new ones.</p>
         <ul class="tx-list">${cats.map((c) => rowHtml(c) + subs(c.id).map((s) => rowHtml(s, true)).join('')).join('')}</ul>
         <form class="row" id="cat-add"><input name="name" maxlength="60" placeholder="New ${kind} category" style="flex:1" /><button class="btn btn-primary" type="submit">${icon('plus')}Add</button></form>
+        <h3 style="margin-top:8px">Smart Entry words</h3>
+        <p class="muted small">Teach Smart Entry your own words, e.g. “chai” → Snacks. The word stays in the description; only the category is chosen.</p>
+        <ul class="tx-list">${(store.db.settings.smartRules || []).map((r) => `<li class="row card-flat"><b>“${esc(r.keyword)}”</b><span class="muted small">→ ${esc(categoryName(r.categoryId))}</span><span class="spacer"></span><button type="button" class="icon-btn sm" data-rule-del="${esc(r.keyword)}" aria-label="Remove rule for ${esc(r.keyword)}">${icon('trash')}</button></li>`).join('') || '<li class="muted small">No custom words yet.</li>'}</ul>
+        <form class="row" id="rule-add"><input name="keyword" maxlength="40" placeholder="Word, e.g. chai" style="flex:1;min-width:120px" autocapitalize="none" /><select name="categoryId" style="flex:1;min-width:140px">${categoryOptions('expense', '', { blank: 'Category…' })}${categoryOptions('income', '')}</select><button class="btn btn-ghost" type="submit">${icon('plus')}Add word</button></form>
       </div>`;
   };
   const mount = (root) => {
     $$('[data-kind]', root).forEach((b) => b.addEventListener('click', () => openCategoryManager(b.dataset.kind)));
+    $$('[data-quick]', root).forEach((cb) => cb.addEventListener('change', async () => {
+      try { await store.setCategoryQuick(cb.dataset.quick, cb.checked); toast(cb.checked ? 'Shown in Quick Add' : 'Hidden from Quick Add'); app.render(); } catch (e) { toast(e.message, { bad: true }); }
+    }));
+    $$('[data-rule-del]', root).forEach((b) => b.addEventListener('click', async () => { await store.deleteSmartRule(b.dataset.ruleDel); openCategoryManager(kind); }));
+    $('#rule-add', root).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try { await store.saveSmartRule({ keyword: e.target.elements.keyword.value, categoryId: e.target.elements.categoryId.value }); openCategoryManager(kind); toast('Word added'); } catch (err) { toast(err.message, { bad: true }); }
+    });
     $$('.cat-name', root).forEach((inp) => inp.addEventListener('change', async () => {
       try { await store.renameCategory(inp.dataset.id, inp.value); toast('Renamed'); } catch (e) { toast(e.message, { bad: true }); inp.value = categoryName(inp.dataset.id); }
     }));
