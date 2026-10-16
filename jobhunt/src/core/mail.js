@@ -5,13 +5,14 @@
 // Nothing is guessed: a date is only returned when the email states it.
 import { str, toDay, addDays } from './util.js';
 
-const ATS = /(greenhouse|lever\.co|hire\.lever|myworkday|workday|smartrecruiters|ashbyhq|icims|successfactors|taleo|jobvite|freshteam|zohorecruit|keka|darwinbox|breezy|recruitee|workable|bamboohr|personio|teamtailor|hirist|iimjobs|instahyre|cutshort|wellfound|angel\.co|naukri|foundit|monster|indeed|linkedin|glassdoor|ziprecruiter|dice|hackerrank|hackerearth|codility|codesignal|testgorilla|mettl|imocha|calendly|goodtime|gem\.com|beamery|sendgrid|mailchimp|amazonses|mandrillapp)/i;
+const ATS = /(greythr|zimyo|superset|hirepro|unstop|apna|internshala|turbohire|recruitcrm|zoho|naukri|propeers|freshersindia|greenhouse|lever\.co|hire\.lever|myworkday|workday|smartrecruiters|ashbyhq|icims|successfactors|taleo|jobvite|freshteam|zohorecruit|keka|darwinbox|breezy|recruitee|workable|bamboohr|personio|teamtailor|hirist|iimjobs|instahyre|cutshort|wellfound|angel\.co|naukri|foundit|monster|indeed|linkedin|glassdoor|ziprecruiter|dice|hackerrank|hackerearth|codility|codesignal|testgorilla|mettl|imocha|calendly|goodtime|gem\.com|beamery|sendgrid|mailchimp|amazonses|mandrillapp)/i;
 const FREE_MAIL = /^(gmail|googlemail|yahoo|outlook|hotmail|live|icloud|me|proton|protonmail|rediffmail|aol|zoho)\./i;
 const ASSESS_PLATFORMS = /hackerrank|hackerearth|codility|codesignal|testgorilla|mettl|imocha|coderbyte|karat|vervoe|criteria corp|shl\b|aon assessment|harver|pymetrics/i;
 
 const T = {
   offer: /\b(pleased|delighted|happy|excited|thrilled) to (offer|extend (you )?(an|the|a formal)? ?offer)|\boffer letter\b|\bletter of offer\b|\boffer of employment\b|\bemployment offer\b|\bjob offer\b(?! alert)/i,
-  offerFalse: /special offer|offer (valid|ends|expires)|limited[- ]time offer|% off|cashback|pre-?approved|credit card|loan offer|exclusive offer/i,
+  offerFalse: /special offer|offer (valid|ends|expires)|limited[- ]time offer|% off|cashback|pre-?approved|credit card|loan offer|exclusive offer|work from home|typing (work|jobs?|tasks?)|no experience needed|per hour|earn (up to|₹|rs)/i,
+  notApplied: /next step is for you to apply|before you (get started with|start|begin) your application|complete your application( form)?|finish your application|(haven't|have not) (yet )?(applied|completed)|start your application|confirm your identity|one-time passcode|verification code|\botp\b/i,
   rejection: /\bunfortunately\b[^.]{0,160}\b(not|won't|will not|unable|other candidates|another candidate|decided)|\bregret to inform\b|\b(not|won't|will not) be (moving|proceeding|progressing) (forward|further|ahead)|\b(decided|chosen|chose) to (move|proceed|go) (forward |ahead )?with (other|another|a different)|\bnot (been )?selected\b|\bposition has (now )?been filled\b|\bno longer (being )?considered\b|\bunable to (offer|move forward|progress)\b|\bnot (a|the right) (fit|match) (for|at) this time\b|\bwe will not be (moving|proceeding)\b|\bpursue other candidates\b/i,
   reschedule: /\breschedul(e|ed|ing)\b[^.]{0,80}\b(interview|call|meeting|conversation)|\b(interview|call)\b[^.]{0,60}\breschedul/i,
   interview: /\binvite you (to|for) (an? |the )?(interview|conversation|call|chat|discussion|round)|\binterview (invitation|invite|request|schedul|confirmation|confirmed|slot|details)|\bschedule (an? |the |your )?(interview|call|conversation|chat)|\b(availability|available) for (an? |the )?(interview|call|conversation)|\bnext (round|step is an interview|stage of (the|our) (interview|hiring) process)|\binterview (has been )?(scheduled|booked|confirmed)\b|\b(first|second|third|technical|final|hr|hiring manager|panel|phone|video) (round|interview)\b|\bcalendly\.com\b|\bshortlisted for (the )?(interview|next round)/i,
@@ -20,7 +21,7 @@ const T = {
   applied: /\bthank(s| you) for (applying|your application|submitting your application|your interest in (the )?(role|position|opening|job))|\bapplication (has been |was |is )?(received|submitted|sent|successfully submitted|complete)\b|\bwe('ve| have) (successfully )?received your application\b|\byour application (to|for|with|at) [^.]{2,80} (has been|was|is) (received|submitted|sent)|\byour application was sent to\b|\bsuccessfully applied\b|\byou (have )?applied (to|for)\b|\bapplication confirmation\b|\bconfirmation of (your )?application\b/i,
   recruiter: /\b(came across|found|saw) your (profile|resume|cv)|\bare you (open|interested) (to|in) (new|a|exploring)|\bi('m| am) (a |the )?(recruiter|talent|hiring)|\b(exciting|great) (opportunity|role|opening)\b[^.]{0,80}\b(interested|open|connect)/i,
   marketingWords: /\b(job alerts?|jobs for you|recommended (jobs|for you)|new jobs|jobs (matching|near)|hiring now|apply now|top companies|walk-?in|registration|complete (your )?(registration|profile)|\d+% profile|webinar|course|certification|masterclass|upskill|% off|offer ends|cashback|credit (card|limit)|loan|pre-?approved|premium|subscription|reward points|email alerts)\b/i,
-  marketingStrong: /\b(job alerts?|jobs you may be interested in|recommended jobs|people also viewed|new jobs for you|jobs similar to)\b|\bregistration fee\b|\bcomplete (your )?registration\b|\bpay(ment)? (of )?(rs\.?|₹|inr)\s?\d/i,
+  marketingStrong: /\b(job alerts?|jobs you may be interested in|recommended jobs|people also viewed|new jobs for you|jobs similar to|reviews? (&|and) salaries|interview questions of|see what employees|employees say|company reviews|salaries of)\b|\bregistration fee\b|\bcomplete (your )?registration\b|\bpay(ment)? (of )?(rs\.?|₹|inr)\s?\d/i,
 };
 
 const STOP_CO = /^(the|our|us|your|a|an|this|team|role|position|job|company|organization|organisation|opportunity|you|we|it|interest|application|hiring team|recruiting team|careers?|talent acquisition)$/i;
@@ -33,6 +34,7 @@ function cleanCompany(s) {
 }
 function cleanRole(s) {
   let r = str(s).replace(/[“”"'’]+/g, '').replace(/\s+/g, ' ').trim().replace(/[\s,.:;!?|–—-]+$/, '');
+  r = r.split(/\s*[!?]\s*|\s+(?:has been|have been|was|is|and we|we|at|with)\s+/i)[0];
   r = r.replace(/^(the|a|an|our)\s+/i, '').replace(/\s+(role|position|opening|job|vacancy)$/i, '');
   if (!r || r.length < 3 || r.length > 90 || r.split(' ').length > 12) return '';
   if (!/(manager|analyst|engineer|consultant|owner|lead|specialist|associate|developer|designer|scientist|architect|director|officer|executive|intern|program|product|operations|solutions?|apm|tpm|pm\b)/i.test(r)) return '';
@@ -154,16 +156,20 @@ export function classifyEmail(msg) {
   let evidence = '';
   const hit = (re) => { const m = text.match(re); if (m) evidence = m[0].slice(0, 120); return !!m; };
   if (hit(T.offer) && !T.offerFalse.test(text)) type = 'offer';
-  else if (hit(T.rejection)) type = 'rejection';
+  else if (hit(T.rejection) && !/[“"][^”"]{0,40}(regret|unfortunately|not (be )?moving forward)[^”"]{0,160}[”"]/i.test(text)) type = 'rejection';
   else if (hit(T.reschedule)) type = 'reschedule';
   else if (hit(T.interview)) type = 'interview';
   else if (hit(T.assessment) || (ASSESS_PLATFORMS.test(from.domain + ' ' + text) && /\b(invite|invitation|test|assessment|challenge)\b/i.test(text) && (evidence = 'assessment platform'))) type = 'assessment';
-  else if (hit(T.applied)) type = 'applied';
+  else if (hit(T.applied) && !T.notApplied.test(text)) type = 'applied';
+  else if (/confirm your identity|one-time pass(code|word)|verification code|\botp\b|verify your (email|account)|reset your password/i.test(text)) { type = 'other'; reasons.push('Account verification or passcode email'); }
   else if (hit(T.infoRequest)) type = 'info_request';
   else if (hit(T.recruiter)) type = 'recruiter';
   if (isMarketing && type !== 'rejection' && type !== 'offer' && type !== 'interview') { reasons.push('Looks like a newsletter, job alert or promotion'); type = 'marketing'; }
   // A job board's "apply now" blast often says "your application"; a real confirmation names a company.
   if (type === 'applied' && /\bsubmit your application now\b|\bapply now\b/i.test(text)) { type = 'marketing'; reasons.push('Asks you to apply, so it is not a confirmation'); }
+  if (type === 'other' && T.notApplied.test(text)) reasons.push('Asks you to start or finish an application; not a confirmation');
+  const digest = subject.match(/\byou applied (?:for|to) (\d+) jobs?\b|\b(\d+) applications? (?:sent|submitted)\b/i);
+  const digestCount = digest ? Number(digest[1] || digest[2]) : 0;
 
   // Company
   let company = '', companyHow = '';
@@ -210,7 +216,7 @@ export function classifyEmail(msg) {
   confidence = Math.min(0.99, Math.round(confidence * 100) / 100);
   return {
     type, company, companyHow, role, requisitionId, deadline, deadlineTime, deadlinePhrase, interviewDate, interviewTime,
-    confidence, evidence, reasons, fromEmail: from.email, fromName: from.name, fromDomain: from.domain, refDay,
+    confidence, evidence, reasons, fromEmail: from.email, fromName: from.name, fromDomain: from.domain, refDay, digestCount,
   };
 }
 

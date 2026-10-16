@@ -67,6 +67,9 @@ export async function syncGmail(store, call, { by = 'page', maxThreads = 100 } =
       for (const t of threads) for (const m of t.messages || []) seen.push({ ...m, threadId: m.threadId || t.id });
       pageToken = (r && r.nextPageToken) || '';
     } while (pageToken && counts.threads < maxThreads);
+    // Stopped early: keep the sync point where it was so the next run picks up the rest.
+    var capped = !!pageToken;
+    counts.capped = capped;
     // Note: search previews show the oldest ~5 messages per thread, so long threads are re-read below.
     const byThread = new Map();
     for (const m of seen) { if (!byThread.has(m.threadId)) byThread.set(m.threadId, []); byThread.get(m.threadId).push(m); }
@@ -109,7 +112,7 @@ export async function syncGmail(store, call, { by = 'page', maxThreads = 100 } =
   const rec = { kind: 'gmail-sync', by, startedAt, finishedAt, ok, counts, errors: errors.slice(0, 10), query };
   await store.set('runs', runId(), rec).catch(() => {});
   const patch = { lastAttemptAt: finishedAt, lastAttemptBy: by, lastAttemptOk: ok, lastError: ok ? '' : errors[0] };
-  if (ok || counts.stored) Object.assign(patch, { lastSyncAt: finishedAt, lastSyncBy: by, lastMessageDay: newest, lastCounts: counts });
+  if (ok || counts.stored) Object.assign(patch, { lastSyncAt: finishedAt, lastSyncBy: by, lastMessageDay: counts.capped ? (sys.lastMessageDay || '') : newest, lastCounts: counts });
   await store.merge('system', 'gmail', patch).catch(() => {});
   return rec;
 }

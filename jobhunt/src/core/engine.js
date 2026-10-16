@@ -25,12 +25,17 @@ export function companyMatches(a, b) {
   // "Razorpay" vs "Razorpay Software"; "PayU" vs "PayU Payments". Short first words must match exactly.
   return (fx === fy && fx.length >= 4) || (cx.length >= 5 && cy.startsWith(cx)) || (cy.length >= 5 && cx.startsWith(cy));
 }
+const LEVELS = ['associate', 'assistant', 'senior', 'junior', 'lead', 'principal', 'staff', 'head', 'intern', 'trainee', 'chief', 'vp', 'director', '1', '2', '3'];
 export function roleMatches(a, b) {
   const x = normTitle(a), y = normTitle(b);
   if (!x || !y) return 0;
   if (x === y) return 1;
-  if (x.includes(y) || y.includes(x)) return 0.85;
-  return titleSimilarity(x, y);
+  // "Product Manager" is not "Associate Product Manager": level words must agree.
+  const lv = (t) => LEVELS.filter((w) => new RegExp(`\\b${w}\\b`).test(t)).sort().join(',');
+  const sameLevel = lv(x) === lv(y);
+  let s = x.includes(y) || y.includes(x) ? 0.85 : titleSimilarity(x, y);
+  if (!sameLevel) s = Math.min(s, 0.4);
+  return s;
 }
 
 /** Merges the page's own reading of an email with the scheduled reader's hint (if any). */
@@ -44,9 +49,17 @@ export function interpret(ev) {
   const ht = String(hint.type);
   const hiring = (t) => HIRING.includes(t);
   if (det.type === ht || (!hiring(det.type) && !hiring(ht))) {
-    for (const k of ['company', 'role', 'requisitionId', 'deadline', 'deadlineTime', 'interviewDate', 'interviewTime']) if (!out[k] && hint[k]) { out[k] = str(hint[k]); out.filledBy = 'scheduled reader'; }
-    if (det.type === ht && hint.company && !det.company) out.confidence = Math.min(0.95, out.confidence + 0.2);
+    // Both agree on what it is. The scheduled reader saw the whole email, so its names win; the rules' dates fill gaps.
+    if (hint.company) out.company = str(hint.company);
+    if (hint.role) out.role = str(hint.role);
+    for (const k of ['requisitionId', 'deadline', 'deadlineTime', 'interviewDate', 'interviewTime']) if (!out[k] && hint[k]) out[k] = str(hint[k]);
+    if (det.type === ht && hint.company) out.confidence = Math.min(0.97, Math.max(out.confidence, 0.6) + 0.15);
+    if (Array.isArray(hint.items)) out.items = hint.items;
     return out;
+  }
+  if (hiring(det.type) && !hiring(ht) && Number(hint.confidence || 0) >= 0.8) {
+    // The rules saw a hiring phrase, but the reader (full email) says it isn't one: e.g. a newsletter quoting a rejection.
+    return { ...out, readerSaysNotHiring: true, readerType: ht, company: str(hint.company) || out.company };
   }
   if (!hiring(det.type) && det.type !== 'marketing' && hiring(ht) && Number(hint.confidence || 0) >= 0.75) {
     // The rules found nothing; the scheduled reader (Claude) did. Trust it only for a clear match later.
@@ -107,6 +120,8 @@ export function planAutomation(state, { nowIso = now().toISOString(), by = 'page
   const taskIds = new Set([...state.tasks.keys()]);
   const jobsById = model.jobById;
 
+  const followUps = new Set();
+  const hasOpenFollowUp = (appId) => followUps.has(appId) || [...state.tasks.values()].some((t) => t.appId === appId && t.category === 'Follow-up' && t.status !== 'Completed');
   const addTask = (id, t, list) => {
     if (!auto.autoTasks || taskIds.has(id)) return;
     taskIds.add(id);
@@ -138,6 +153,10 @@ export function planAutomation(state, { nowIso = now().toISOString(), by = 'page
       if (resolution.type && HIRING.includes(resolution.type)) p.type = resolution.type;
       if (resolution.company) p.company = resolution.company;
       if (resolution.role) p.role = resolution.role;
+    } else if (p.readerSaysNotHiring) {
+      const live = p.company ? [...apps.values()].filter((a) => companyMatches(a.company, p.company) && !ENDED_STAGES.includes(a.stage)) : [];
+      if (live.length && ['rejection', 'offer', 'interview'].includes(p.type)) m = { kind: 'review', reason: `Looks like a ${EVENT_LABEL[p.type].toLowerCase()} for ${p.company}, but the full email reads as ${EVENT_LABEL[p.readerType] || p.readerType}. Please check.`, candidates: live.map((a) => a.id) };
+      else m = { kind: 'ignore', reason: `Read in full by the scheduled sync: ${EVENT_LABEL[p.readerType] || p.readerType}, not a hiring update` };
     } else if (!HIRING.includes(p.type)) {
       if (p.type === 'recruiter' && p.company) {
         const mm = matchEvent(p, [...apps.values()], model.jobs);
@@ -146,9 +165,43 @@ export function planAutomation(state, { nowIso = now().toISOString(), by = 'page
       if (!m) m = { kind: 'ignore', reason: p.type === 'recruiter' ? 'Recruiter outreach is not evidence of an application' : (p.reasons[0] || `Not a hiring update (${label})`) };
     } else if (p.conflict) m = { kind: 'review', reason: p.conflict };
     else if (p.confidence < auto.minConfidence) m = { kind: 'review', reason: `Not sure enough (${Math.round(p.confidence * 100)}%) about what this email means` };
+    else if (p.digestCount > 1 && !(p.items && p.items.length)) m = { kind: 'review', reason: `This email confirms ${p.digestCount} applications but doesn’t list them clearly. Add them from the email.` };
+    else if (p.items && p.items.length > 1 && p.type === 'applied') m = { kind: 'items' };
     else m = matchEvent(p, [...apps.values()], model.jobs);
 
-    if (m.kind === 'ignore') {
+    if (m.kind === 'items') {
+      // One email confirming several applications: handle each listed job on its own.
+      const done = [];
+      for (let i = 0; i < p.items.length; i++) {
+        const it = p.items[i] || {};
+        const sub = { ...p, company: str(it.company), role: str(it.role), items: null };
+        const mm = matchEvent(sub, [...apps.values()], model.jobs);
+        if (mm.kind === 'review') { done.push(`${sub.company || '?'} · ${sub.role || '?'}: needs review`); continue; }
+        let app = mm.app ? apps.get(mm.app.id) : null;
+        if (!app) {
+          const job = mm.kind === 'job' ? state.jobs.get(mm.job.id) : null;
+          const id = `app_m_${ev.id}_${i}`;
+          app = { id, jobId: job ? mm.job.id : '', company: (job && job.company) || sub.company, title: (job && job.title) || sub.role, location: (job && job.location) || '', jobUrl: (job && job.link) || '', applicationUrl: '', requisitionId: '', source: (job && job.source) || '', stage: 'Applied', appliedOn: evDay,
+            resumeVersion: '', documents: '', recruiter: { name: '', email: '', phone: '', linkedin: '' }, referral: '', assessments: [], interviews: [], followUpDate: '', expectedComp: '', offeredComp: '', notes: '', nextAction: '', priority: '',
+            history: [{ at: nowIso, type: 'created', to: 'Applied', source: 'gmail', messageId: ev.id + '#' + i, text: `${label} from Gmail: “${short(ev.subject)}” (${mm.how})` }],
+            createdAt: nowIso, updatedAt: nowIso, stageChangedAt: nowIso, stageSource: 'gmail', stageEvidence: { messageId: ev.id, receivedAt: ev.receivedAt, type: 'applied' }, lastActivityAt: ev.receivedAt, lastActivity: label, origin: 'gmail' };
+          apps.set(id, app); counts.created++;
+        } else if (!(app.history || []).some((h) => h.messageId === ev.id + '#' + i)) {
+          applyEvent(app, sub, { ...ev, id: ev.id + '#' + i }, { nowIso, evDay, label, how: mm.how });
+        }
+        touched.add(app.id);
+        done.push(`${app.company} · ${app.title}`);
+        const fu = Number(settings.defaults.followUpDays) || 0;
+        if (fu > 0 && app.stage === 'Applied' && !hasOpenFollowUp(app.id)) {
+          const due = addDays(app.appliedOn || evDay, fu);
+          if (!app.followUpDate) app.followUpDate = due < ref ? ref : due;
+          addTask(`auto-fu-${ev.id}-${i}`, { company: app.company, appId: app.id, jobId: app.jobId, source: { kind: 'gmail', messageId: ev.id, type: 'applied' }, title: `Follow up with ${app.company} on ${app.title}`, category: 'Follow-up', dueDate: app.followUpDate, dueKind: 'suggested', description: `Suggested by your ${fu}-day follow-up rule.` }, res.tasks);
+          followUps.add(app.id);
+        }
+      }
+      Object.assign(res, { status: 'applied', action: `${p.items.length} applications`, reason: done.join('; ') });
+      counts.applied++;
+    } else if (m.kind === 'ignore') {
       Object.assign(res, { status: 'ignored', reason: m.reason });
       counts.ignored++;
     } else if (m.kind === 'review') {
@@ -194,7 +247,8 @@ export function planAutomation(state, { nowIso = now().toISOString(), by = 'page
           if (!action.conflict && !action.stale) {
             const base = { company: app.company, appId: app.id, jobId: app.jobId, source: { kind: 'gmail', messageId: ev.id, type: p.type } };
             const fu = Number(settings.defaults.followUpDays) || 0;
-            if (p.type === 'applied' && fu > 0 && app.stage === 'Applied') {
+            if (p.type === 'applied' && fu > 0 && app.stage === 'Applied' && !hasOpenFollowUp(app.id)) {
+              followUps.add(app.id);
               const due = addDays(app.appliedOn || evDay, fu);
               if (!app.followUpDate) app.followUpDate = due < ref ? ref : due;
               addTask('auto-fu-' + ev.id, { ...base, title: `Follow up with ${app.company} on ${app.title}`, category: 'Follow-up', dueDate: app.followUpDate, dueKind: 'suggested', description: `Suggested by your ${fu}-day follow-up rule. Applied ${app.appliedOn || 'date unknown'}.` }, res.tasks);

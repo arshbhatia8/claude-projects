@@ -35,7 +35,7 @@ JobHunt – Job discovery (scheduled, 9:28 PM IST)      JobHunt – Gmail sync (
 | Tools the page may call | `search_threads`, `get_thread` only (declared in the artifact; anything else is refused by claude.ai) |
 | Tools the scheduled task uses | `search_threads`, `get_thread`, `get_message` (by its instructions) |
 | Google scope of the connector | Set by Anthropic's connector. Public reports list `gmail.readonly` + `gmail.compose` ([report](https://claudeissues.com/issue/53835-claude-ai-gmail-mcp-connector-requests-insufficient-oauth-scopes-cannot-read-ema)). This project cannot narrow that grant; it only ever calls read tools. |
-| Search | hiring keywords + `after:<last sync − 1 day>`, excluding Promotions, Social, Sent and Chats |
+| Search | hiring keywords + `after:<last sync − 1 day>`, excluding Promotions, Social, Sent and Chats. Oldest first; if a run hits its cap the sync point is not advanced, so the next run continues where it stopped. |
 | Stored per email | sender, date, subject, ≤240-char snippet, what it meant, what was done. A ≤2,000-char excerpt is kept only until processed (or reviewed), then deleted. |
 | Disconnect | Page: Gmail Updates → *Turn off for this page*. Everywhere: claude.ai → Settings → Connectors → Gmail → Disconnect; Google Account → Security → Third-party connections. |
 | Delete email data | Gmail Updates → *Delete email data* (removes all email records and subjects from histories; applications, jobs and tasks stay) |
@@ -47,7 +47,9 @@ Why not a separate Google OAuth app with only `gmail.readonly`? Its token would 
 - If you changed a post-application stage by hand **after** the email arrived (e.g. Withdrawn), your change wins and the email is only noted.
 - An email about an application that is already Rejected/Withdrawn/Closed/Offer is flagged, not applied.
 - No company, several matching applications, or low confidence (default <60%) → flagged for review.
-- Recruiter outreach, job alerts, newsletters and promotions never count as applications.
+- Recruiter outreach, job alerts, newsletters, OTP/passcode mails, "complete your application" nudges and promotions never count as applications.
+- Digest emails (e.g. Naukri/LinkedIn "your applications" summaries) create one application per listed role when the roles can be read; otherwise they go to review.
+- Level words matter: "Product Manager" and "Associate Product Manager" at the same company are different applications.
 - Every processed email is recorded once (Gmail message id), so re-syncing never duplicates events, history or tasks.
 - Dates (assessment deadlines, interview times) are recorded only when the email states one; a list of options records nothing.
 
@@ -84,7 +86,7 @@ Back up from Settings (JSON); CSV exports for jobs, applications and tasks.
 
 ```bash
 cd jobhunt
-npm install && npm test      # 49 unit tests
+npm install && npm test      # 53 unit tests
 npm run build                # dist/artifact/index.html + dist/pages/
 npm run e2e                  # 101 browser checks (desktop, iPhone 393 px, artifact + Gmail stand-ins)
 ```

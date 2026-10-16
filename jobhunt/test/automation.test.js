@@ -274,6 +274,22 @@ test('Gmail sync: stores new hiring mail once, uses read-only tools, incremental
   assert.equal(store.all('applications')[0].stage, 'Applied');
 });
 
+test('a sync that hits its page limit does not advance the sync point', async () => {
+  const { store } = await newStore(seed());
+  const many = Array.from({ length: 6 }, (_, i) => ({ id: 'c' + i, threadId: 'C' + i, date: '2026-10-1' + i + 'T09:00:00Z', sender: 'x@y.com', subject: 'Hello', snippet: 'Unsubscribe job alert' }));
+  const call = async (tool, input) => {
+    if (tool === 'search_threads') {
+      const page = Number(input.pageToken || 0);
+      const slice = many.slice(page * 2, page * 2 + 2).map((m) => ({ id: m.threadId, messages: [m] }));
+      return { threads: slice, nextPageToken: page < 2 ? String(page + 1) : '' };
+    }
+    return { messages: [] };
+  };
+  const r = await syncGmail(store, call, { by: 'test', maxThreads: 2 });
+  assert.equal(r.counts.capped, true);
+  assert.equal(store.get('system', 'gmail').lastMessageDay, '', 'not advanced past unread mail');
+});
+
 test('15. sync errors are recorded and never shown as a successful sync', async () => {
   const { store } = await newStore();
   const r = await syncGmail(store, fakeGmail([], { failWith: 'needs_reauth' }).call, { by: 'test' });
@@ -304,4 +320,41 @@ test('11. dashboard counts come from the processed records', async () => {
   assert.equal(k.interviewsScheduled, 1);
   assert.equal(k.relevant >= 1, true);
   assert.equal(k.overdueTasks, 0);
+});
+
+test('real-world look-alikes: quoted rejection, typing-job "offer", referral, passcode, review digests', async () => {
+  const { store } = await newStore(seed());
+  const id = await A.createApplication(store, { company: 'Acme Pay', title: 'Product Manager – Payments', stage: 'Applied', appliedOn: '2026-10-10' });
+  const mk = (eid, o) => store.set('mailEvents', eid, ev(eid, o));
+  await mk('q1', { from: 'no-reply@careernewsletter.in', subject: 'We regret to inform you...', snippet: 'Hi Arsh, "We regret to inform you that we will not be moving forward with your application" That email never tells you why.', hint: { type: 'marketing', confidence: 0.9 } });
+  await mk('q2', { from: 'hr@jobspam.in', subject: 'Typing Work from Home | Your Application is required', snippet: 'We are pleased to offer you a remote work opportunity involving simple typing tasks.', hint: { type: 'marketing', confidence: 0.9 } });
+  await mk('q3', { from: 'donotreply@email.careers.bigco.com', subject: 'You have been referred to BigCo', excerpt: 'Good news! Someone referred you for the following role at BigCo: Support Engineer - 200051942. The next step is for you to apply! We cannot move forward until your application is submitted.' });
+  await mk('q4', { from: 'careers@recruitment.bigco.com', subject: 'Please confirm your identity', excerpt: 'Thank you for your interest in working at BigCo. Before you get started with your application, please confirm your identity using the one-time passcode below.' });
+  await mk('q5', { from: 'noreply@reviews.example', subject: '⭐ Reviews & Salaries of Acme Pay, and other companies', snippet: 'You applied to Acme Pay - see what employees say. Unsubscribe' });
+  await run(store);
+  for (const q of ['q1', 'q2', 'q3', 'q4', 'q5']) assert.equal(store.get('mailEvents', q).result.status, 'ignored', q);
+  assert.equal(store.get('applications', id).stage, 'Applied');
+  assert.equal(store.all('applications').length, 1);
+});
+
+test('a digest confirming several applications creates one per listed job, or asks you', async () => {
+  const { store } = await newStore(seed());
+  await store.set('mailEvents', 'd1', ev('d1', { from: 'info@jobboard.example', subject: 'You applied for 2 jobs on 15 Oct', excerpt: 'Your applications were sent. Technical Program Manager — Kappa. Associate Product Manager — Lumen.', hint: { type: 'applied', company: 'Kappa', role: 'Technical Program Manager', confidence: 0.8, items: [{ company: 'Kappa', role: 'Technical Program Manager' }, { company: 'Lumen', role: 'Associate Product Manager' }] } }));
+  await store.set('mailEvents', 'd2', ev('d2', { from: 'info@jobboard.example', subject: 'You applied for 3 jobs on 14 Oct', excerpt: 'Your applications were sent. Good luck!' }));
+  await run(store);
+  const apps = store.all('applications').map((a) => `${a.company}|${a.title}|${a.stage}`).sort();
+  assert.deepEqual(apps, ['Kappa|Technical Program Manager|Applied', 'Lumen|Associate Product Manager|Applied']);
+  assert.equal(store.get('mailEvents', 'd2').result.status, 'review');
+  assert.equal(store.all('tasks').filter((t) => t.category === 'Follow-up').length, 2);
+});
+
+test('"Product Manager" and "Associate Product Manager" at one company are different applications; one follow-up each', async () => {
+  const { store } = await newStore();
+  await store.set('mailEvents', 'g1', ev('g1', { receivedAt: '2026-10-11T09:00:00Z', from: 'jobs-noreply@linkedin.com', subject: 'Arsh, your application was sent to Groww', excerpt: 'Your application was sent to Groww\nAssociate Product Manager\nGroww · Bengaluru\n' }));
+  await store.set('mailEvents', 'g2', ev('g2', { receivedAt: '2026-10-14T09:00:00Z', from: 'jobs-noreply@linkedin.com', subject: 'Arsh, your application was sent to Groww', excerpt: 'Your application was sent to Groww\nProduct Manager\nGroww · Bengaluru\n' }));
+  await store.set('mailEvents', 'g3', ev('g3', { receivedAt: '2026-10-14T10:00:00Z', from: 'careers@groww.in', subject: 'Groww | Thanks - We\'ve received your job application', excerpt: 'Thank you for applying for the Product Manager role at Groww. We have received your application.' }));
+  await run(store);
+  const apps = store.all('applications').map((a) => a.title).sort();
+  assert.deepEqual(apps, ['Associate Product Manager', 'Product Manager']);
+  assert.equal(store.all('tasks').filter((t) => t.category === 'Follow-up').length, 2, 'second confirmation adds no second follow-up');
 });
