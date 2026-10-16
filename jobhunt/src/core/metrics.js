@@ -46,6 +46,9 @@ export function kpis(model, range) {
     offers: apps.filter((a) => a.stage === 'Offer Received').length,
     rejections: apps.filter((a) => a.stage === 'Rejected').length,
     gmailApplied: jobs.filter((j) => !j.app && j.status === 'Applied').length,
+    relevant: jobs.filter((j) => !j.meta.notRelevant && j.fresh.verification !== 'Closed' && (j.score ?? 0) >= (model.settings.automation.relevanceThreshold || 70) && inRange(j.foundDay, range)).length,
+    overdueTasks: model.tasks.filter((t) => t.status !== 'Completed' && t.dueDate && t.dueDate < ref).length,
+    needsReview: (model.mailEvents || []).filter((e) => e.result && e.result.status === 'review').length,
   };
 }
 

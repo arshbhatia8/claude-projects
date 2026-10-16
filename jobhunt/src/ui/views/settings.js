@@ -88,8 +88,26 @@ export default function settings(ctx) {
     h('label.check', h('input', { type: 'checkbox', id: 'set-upd', checked: S.importPrefs.updateExisting !== false, onchange: (e) => { S.importPrefs.updateExisting = e.target.checked; save(); } }), 'Re-imports may refresh listing details of existing jobs'),
     field('Theme', sel('set-theme', [['dark', 'Dark (default)'], ['light', 'Light'], ['system', 'Match my device']], S.theme, (v) => { S.theme = v; document.documentElement.setAttribute('data-app-theme', v); }))));
 
-  return h('div.stack', h('div.page-head', h('div', h('h1', 'Settings'), h('p', 'Changes save as you make them.'))),
-    dataCard(ctx), roles, prefs, weights, defaults,
+  // Automation
+  const A_ = S.automation;
+  const num = (id, val, set, attrs = {}) => { const i = input(id, val, { type: 'number', inputmode: 'decimal', ...attrs }); i.addEventListener('change', () => { set(Number(i.value)); save(); }); return i; };
+  const tog = (id, label, key) => h('label.check', h('input', { type: 'checkbox', id, checked: A_[key] !== false, onchange: (e) => { A_[key] = e.target.checked; save(); } }), label);
+  const watch = h('textarea', { id: 'set-watch', rows: 3, placeholder: 'e.g. razorpay, cashfree, phonepe' }); watch.value = (A_.watchCompanies || []).join(', ');
+  watch.addEventListener('change', () => { A_.watchCompanies = list(watch.value).map((x) => x.toLowerCase()); save(); });
+  const automationCard = card('Automation', 'What runs on its own',
+    h('div.stack.tight',
+      tog('auto-tasks', 'Create tasks automatically from confirmed events (follow-ups, assessments, interview prep, best new matches)', 'autoTasks'),
+      tog('auto-merge', 'Merge certain duplicate jobs automatically (same listing, same requisition, or same company + title + city)', 'autoMerge'),
+      tog('auto-gmail', 'Sync Gmail when this page opens (after you have allowed Gmail once)', 'syncGmailOnOpen')),
+    h('div.grid-2',
+      field('Only update the tracker when at least this sure (%)', num('set-conf', Math.round(A_.minConfidence * 100), (v) => { A_.minConfidence = Math.min(0.95, Math.max(0.5, v / 100)); }, { min: 50, max: 95, step: 5 }), 'Lower-confidence emails go to Gmail Updates for review.'),
+      field('“Relevant job” means a match score of at least', num('set-rel', A_.relevanceThreshold, (v) => { A_.relevanceThreshold = Math.max(0, Math.min(100, v)); }, { min: 0, max: 100 })),
+      field('Create a “review this job” task for new matches scoring at least', num('set-revt', A_.reviewTaskThreshold, (v) => { A_.reviewTaskThreshold = Math.max(0, Math.min(100, v)); }, { min: 0, max: 100 }), '0 turns these tasks off.'),
+      field('First Gmail sync looks back (days)', num('set-look', A_.gmailLookbackDays, (v) => { A_.gmailLookbackDays = Math.max(1, Math.min(180, v || 45)); }, { min: 1, max: 180 })),
+      h('div.span-all', field('Company career pages to watch (the scheduled job search reads their public job boards)', watch, 'Use the name from their careers URL: jobs.lever.co/<name>, boards.greenhouse.io/<name>, jobs.ashbyhq.com/<name>.'))));
+
+  return h('div.stack', h('div.page-head', h('div', h('h1', 'Settings'), h('p', 'Changes save as you make them. The scheduled job search reads your target roles, locations and watch-list from here.'))),
+    dataCard(ctx), automationCard, roles, prefs, weights, defaults,
     h('p.faint.small', `JobHunt Command Center · build ${ctx.build} · ${ctx.mode === 'cloud' ? 'claude.ai artifact database' : 'browser storage'}`));
 }
 
@@ -106,7 +124,7 @@ function dataCard(ctx) {
   } });
   return h('section.card.stack', h('div.card-head', { style: { marginBottom: 0 } }, h('h3', 'Your data, backup and restore'), h('span.sub', ctx.store.lastSyncAt ? `Last update ${fmtTime(ctx.store.lastSyncAt.toISOString())}` : '')),
     where,
-    h('div.stat-row', h('div.stat', h('b', String(counts.jobs)), h('span', 'jobs')), h('div.stat', h('b', String(counts.applications)), h('span', 'applications')), h('div.stat', h('b', String(counts.tasks)), h('span', 'tasks')), h('div.stat', h('b', String(counts.jobMeta)), h('span', 'jobs with your notes/flags')), h('div.stat', h('b', String(counts.imports)), h('span', 'imports'))),
+    h('div.stat-row', h('div.stat', h('b', String(counts.jobs)), h('span', 'jobs')), h('div.stat', h('b', String(counts.applications)), h('span', 'applications')), h('div.stat', h('b', String(counts.tasks)), h('span', 'tasks')), h('div.stat', h('b', String(counts.jobMeta)), h('span', 'jobs with your notes/flags')), h('div.stat', h('b', String(counts.mailEvents)), h('span', 'email records')), h('div.stat', h('b', String(counts.imports)), h('span', 'imports'))),
     h('div.row',
       btn('Back up everything (JSON)', () => save(`jobhunt-backup-${fileStamp()}.json`, JSON.stringify(makeBackup(ctx.store, ctx.mode), null, 1), 'application/json'), { kind: 'primary', ico: 'download' }),
       h('label.btn', { for: 'restore-file', tabindex: '0', role: 'button', onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); restoreInput.click(); } } }, icon('upload'), h('span.lbl', 'Restore a backup'), restoreInput)),

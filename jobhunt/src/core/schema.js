@@ -5,12 +5,15 @@
 //   jobMeta/<jobId>    your own data about a job: favourite, shortlist, notes, verification, history.
 //   applications/<id>  the application pipeline.
 //   tasks/<id>         to-dos, linked to a job and/or an application.
-//   imports/<id>       one record per import run (history).
+//   imports/<id>       one record per manual import (history).
+//   mailEvents/<gmailMessageId>  one hiring-related email: who/when/subject, what it means, what was done.
+//   runs/<id>          one record per automation run (scheduled discovery, Gmail sync, engine).
+//   system/<name>      automation state: gmail (last sync), discovery (last run), engine, schedule.
 //   settings/main      preferences.
-// The scheduled task only ever writes `jobs`, so nothing it does can overwrite your notes.
+// Scheduled tasks write only `jobs`, `mailEvents`, `runs` and `system`, so nothing they do can overwrite your notes.
 import { str, isPlaceholder, toDay, slug } from './util.js';
 
-export const COLLECTIONS = ['jobs', 'jobMeta', 'applications', 'tasks', 'imports', 'settings'];
+export const COLLECTIONS = ['jobs', 'jobMeta', 'applications', 'tasks', 'imports', 'mailEvents', 'runs', 'system', 'settings'];
 
 export const STAGES = [
   'Discovered', 'To Review', 'Shortlisted', 'Ready to Apply', 'Applied', 'Assessment Pending',
@@ -72,6 +75,10 @@ export function defaultSettings() {
     weights: { role: 25, skills: 15, experience: 20, location: 15, compensation: 5, freshness: 10, seniority: 10, searchScore: 15 },
     defaults: { applicationStage: 'Applied', taskPriority: 'Medium', followUpDays: 7, jobPriority: 'Medium' },
     importPrefs: { updateExisting: true, defaultSource: '' },
+    automation: {
+      autoTasks: true, autoMerge: true, minConfidence: 0.6, reviewTaskThreshold: 85, reviewTasksPerRun: 5,
+      relevanceThreshold: 70, gmailLookbackDays: 45, syncGmailOnOpen: true, watchCompanies: [],
+    },
     theme: 'dark',
   };
 }
@@ -81,11 +88,12 @@ export function mergeSettings(stored) {
   const d = defaultSettings();
   if (!stored || typeof stored !== 'object') return d;
   const out = { ...d, ...stored };
-  for (const k of ['workModes', 'compensation', 'fxToINR', 'weights', 'defaults', 'importPrefs']) out[k] = { ...d[k], ...(stored[k] || {}) };
+  for (const k of ['workModes', 'compensation', 'fxToINR', 'weights', 'defaults', 'importPrefs', 'automation']) out[k] = { ...d[k], ...(stored[k] || {}) };
   if (!Array.isArray(out.targetRoles)) out.targetRoles = d.targetRoles;
   if (!Array.isArray(out.locations)) out.locations = d.locations;
   if (!Array.isArray(out.skills)) out.skills = d.skills;
   if (!Array.isArray(out.seniorityExclude)) out.seniorityExclude = d.seniorityExclude;
+  if (!Array.isArray(out.automation.watchCompanies)) out.automation.watchCompanies = [];
   return out;
 }
 

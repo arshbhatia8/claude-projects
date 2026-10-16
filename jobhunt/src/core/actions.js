@@ -159,8 +159,8 @@ export async function createApplication(store, draft, { force = false } = {}) {
     referral: str(draft.referral), assessments: [], interviews: [],
     followUpDate: str(draft.followUpDate), expectedComp: str(draft.expectedComp), offeredComp: '',
     notes: str(draft.notes), nextAction: str(draft.nextAction),
-    history: [{ at, type: 'created', to: d.stage, text: d.appliedOn ? `Applied on ${d.appliedOn}` : `Added at ${d.stage}` }],
-    createdAt: at, updatedAt: at, stageChangedAt: at,
+    history: [{ at, type: 'created', to: d.stage, source: 'you', text: d.appliedOn ? `Applied on ${d.appliedOn}` : `Added at ${d.stage}` }],
+    createdAt: at, updatedAt: at, stageChangedAt: at, stageSource: 'You', priority: str(draft.priority),
   };
   await store.set('applications', id, doc);
   if (job) await syncJobStatus(store, d.jobId, doc);
@@ -184,8 +184,8 @@ export async function moveStage(store, appId, stage, { appliedOn, note } = {}) {
   if (date && date > today()) throw new ActionError('The applied date cannot be in the future.');
   const at = stamp();
   const patch = {
-    stage, stageChangedAt: at, updatedAt: at,
-    history: cap([...(a.history || []), { at, type: 'stage', from: a.stage, to: stage, ...(note ? { text: str(note) } : {}) }], 300),
+    stage, stageChangedAt: at, updatedAt: at, stageSource: 'You',
+    history: cap([...(a.history || []), { at, type: 'stage', from: a.stage, to: stage, source: 'you', ...(note ? { text: str(note) } : {}) }], 300),
   };
   if (isSubmittedStage(stage) && !a.appliedOn) patch.appliedOn = date;
   await store.update('applications', appId, patch);
@@ -193,7 +193,7 @@ export async function moveStage(store, appId, stage, { appliedOn, note } = {}) {
   return true;
 }
 
-const APP_FIELDS = ['company', 'title', 'location', 'jobUrl', 'applicationUrl', 'requisitionId', 'source', 'appliedOn', 'resumeVersion', 'documents', 'referral', 'followUpDate', 'expectedComp', 'offeredComp', 'notes', 'nextAction'];
+const APP_FIELDS = ['priority', 'company', 'title', 'location', 'jobUrl', 'applicationUrl', 'requisitionId', 'source', 'appliedOn', 'resumeVersion', 'documents', 'referral', 'followUpDate', 'expectedComp', 'offeredComp', 'notes', 'nextAction'];
 const LABEL = { jobUrl: 'job URL', applicationUrl: 'application URL', requisitionId: 'requisition ID', appliedOn: 'applied date', resumeVersion: 'resume version', followUpDate: 'follow-up date', expectedComp: 'expected compensation', offeredComp: 'offered compensation', nextAction: 'next action' };
 export async function updateApplication(store, appId, patch) {
   const a = store.get('applications', appId);
@@ -296,6 +296,38 @@ export const snoozeTask = (store, id, days = 1) => {
   const base = t.dueDate && t.dueDate > today() ? t.dueDate : today();
   return rescheduleTask(store, id, addDays(base, days));
 };
+
+// ---------------- Gmail review & email data ----------------
+
+/** Your decision on a flagged email. The engine applies it on its next pass (within seconds). */
+export async function resolveEvent(store, eventId, resolution) {
+  const ev = store.get('mailEvents', eventId);
+  if (!ev) throw new ActionError('That email record no longer exists.');
+  const r = { action: resolution.action, appId: str(resolution.appId), jobId: str(resolution.jobId), type: str(resolution.type), company: str(resolution.company), role: str(resolution.role), at: stamp() };
+  if (r.action === 'new' && (!r.company || !r.role)) throw new ActionError('Enter the company and role for the new application.');
+  await store.merge('mailEvents', eventId, { resolution: r });
+}
+/** Re-checks an email that was ignored or already handled (e.g. after you fixed a company name). */
+export async function reprocessEvent(store, eventId) {
+  const ev = store.get('mailEvents', eventId);
+  if (!ev) return;
+  await store.merge('mailEvents', eventId, { result: null, resolution: null });
+}
+
+/** Deletes everything kept from emails; applications, jobs and tasks stay. */
+export async function deleteEmailData(store, { scrubHistory = true } = {}) {
+  let n = 0;
+  for (const [id] of [...store.state.mailEvents]) { await store.delete('mailEvents', id); n++; }
+  if (store.get('system', 'gmail')) await store.delete('system', 'gmail');
+  if (scrubHistory) {
+    for (const a of store.all('applications')) {
+      if (!(a.history || []).some((h) => h.source === 'gmail' && h.text)) continue;
+      const history = a.history.map((h) => (h.source === 'gmail' ? { ...h, text: h.type === 'stage' ? `Status changed from a Gmail email (details deleted)` : 'Gmail activity (details deleted)' } : h));
+      await store.update('applications', a.id, { history });
+    }
+  }
+  return n;
+}
 
 // ---------------- settings ----------------
 export const saveSettings = (store, settings) => store.set('settings', 'main', { ...settings, updatedAt: stamp() });

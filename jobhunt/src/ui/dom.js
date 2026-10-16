@@ -71,6 +71,7 @@ const P = {
   merge: '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.3 7.2C12 9 13 12 15.5 12"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M4 20h16"/>',
   upload: '<path d="M12 20V9M7 14l5-5 5 5M4 4h16"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
   refresh: '<path d="M20 11a8 8 0 0 0-14.9-3M4 13a8 8 0 0 0 14.9 3"/><path d="M4 4v4h4M20 20v-4h-4"/>',
 };
 export function icon(name, size = 18) {

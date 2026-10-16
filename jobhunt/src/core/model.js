@@ -69,12 +69,19 @@ export function buildModel(state, ref = today()) {
       submitted: !!a.appliedOn || isSubmittedStage(a.stage),
       followUpDue: isActiveStage(a.stage) && a.followUpDate && a.followUpDate <= ref,
       role: job ? job.role : (scoreJob({ title: a.title }, settings, ref).role || 'Other'),
-      platform: job ? job.platform : (a.source || 'Other'),
+      priority: a.priority || (job && job.meta.priority) || '',
+      verification: a.stageSource === 'gmail' ? 'Confirmed by Gmail' : a.stageSource === 'You' ? 'Set by you' : a.stageSource === 'import' ? 'Imported' : (a.history || []).some((h) => h.source === 'gmail') ? 'Gmail activity' : 'Set by you',
+      nextAssessment: assessments.filter((x) => x.status !== 'Done' && x.status !== 'Skipped' && x.due).sort((x, y) => x.due.localeCompare(y.due))[0] || null,
+      autoTasks: 0,
+      platform: job ? job.platform : (a.source || (a.origin === 'gmail' ? 'Gmail' : 'Other')),
     };
   });
 
   const tasks = [...state.tasks].map(([id, t]) => ({ id, ...t }));
   const imports = [...state.imports].map(([id, r]) => ({ id, ...r })).sort((a, b) => str(b.at).localeCompare(str(a.at)));
-  const dupPairs = duplicatePairs(jobs.filter((j) => !j.hidden), metaById);
-  return { settings, jobs, jobById, apps: enrichedApps, appById: Object.fromEntries(enrichedApps.map((a) => [a.id, a])), tasks, taskById: Object.fromEntries(tasks.map((t) => [t.id, t])), imports, dupPairs, ref };
+  const dupPairs = duplicatePairs(jobs.filter((j) => !j.hidden), metaById).filter((p) => p.level === 'possible' || !settings.automation.autoMerge);
+  const mailEvents = [...(state.mailEvents || new Map())].map(([id, e]) => ({ id, ...e })).sort((a, b) => str(b.receivedAt).localeCompare(str(a.receivedAt)));
+  const runs = [...(state.runs || new Map())].map(([id, r]) => ({ id, ...r })).sort((a, b) => str(b.startedAt || b.finishedAt).localeCompare(str(a.startedAt || a.finishedAt)));
+  const system = Object.fromEntries([...(state.system || new Map())]);
+  return { settings, mailEvents, runs, system, jobs, jobById, apps: enrichedApps, appById: Object.fromEntries(enrichedApps.map((a) => [a.id, a])), tasks, taskById: Object.fromEntries(tasks.map((t) => [t.id, t])), imports, dupPairs, ref };
 }

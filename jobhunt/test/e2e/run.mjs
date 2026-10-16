@@ -138,7 +138,7 @@ const clickText = (page, text, sel = 'button') => page.locator(sel, { hasText: t
   await page.fill('#appliedOn', '2026-10-15');
   await clickText(page, 'Add to tracker', '.modal-foot button');
   await page.waitForSelector('text=Suggested next steps');
-  ok('A7 follow-up task is suggested, not created automatically', (await page.evaluate(() => window.__jobhunt.store.all('tasks').length)) === 0);
+  ok('A7 follow-up task is suggested, not created automatically', (await page.evaluate(() => window.__jobhunt.store.all('tasks').filter((t) => t.category === 'Follow-up').length)) === 0);
   await clickText(page, 'Create selected', '.modal-foot button');
   await page.waitForTimeout(300);
   ok('A7 accepted suggestion creates one follow-up task', (await page.evaluate(() => window.__jobhunt.store.all('tasks').filter((t) => t.category === 'Follow-up').length)) === 1);
@@ -159,6 +159,7 @@ const clickText = (page, text, sel = 'button') => page.locator(sel, { hasText: t
 
   // Kanban stage move via the card's stage menu
   await go(page, 'tracker');
+  await page.locator('.chip', { hasText: 'Board' }).click();
   await page.locator('.kcard', { hasText: 'Nimbus Labs' }).locator('select').selectOption('Interview Scheduled');
   await page.waitForSelector('text=Suggested next steps');
   await clickText(page, 'Not now', '.modal-foot button');
@@ -215,8 +216,10 @@ const clickText = (page, text, sel = 'button') => page.locator(sel, { hasText: t
   ok('A13 KPI: applications submitted = 1', (await kv('Applications submitted')) === '1');
   ok('A13 KPI: interviews scheduled = 1', (await kv('Interviews scheduled')) === '1');
   await page.locator('.chip', { hasText: 'All time' }).click();
-  ok('A13 KPI: jobs discovered = 4 (all time)', (await kv('Jobs discovered')) === '4');
-  ok('A13 charts render from records', await page.locator('.chart svg').count() >= 1 && (await page.locator('.bar-row').count()) >= 2);
+  ok('A13 KPI: new jobs found = 4 (all time)', (await kv('New jobs found')) === '4');
+  await go(page, 'reports');
+  ok('A13 charts render from records (Reports)', await page.locator('.chart svg').count() >= 1 && (await page.locator('.bar-row').count()) >= 2);
+  await go(page, 'dashboard');
   await page.screenshot({ path: join(shots, 'desktop-dashboard.png'), fullPage: true });
 
   // Persistence across reload
@@ -230,7 +233,8 @@ const clickText = (page, text, sel = 'button') => page.locator(sel, { hasText: t
   const backupPath = join(shots, 'backup.json');
   await dl.saveAs(backupPath);
   const backup = JSON.parse(readFileSync(backupPath, 'utf8'));
-  ok('A15 backup contains every collection', backup.app === 'jobhunt-command-center' && backup.collections.jobs.length === 4 && backup.collections.applications.length === 1 && backup.collections.tasks.length === 2);
+  const nTasks = await page.evaluate(() => window.__jobhunt.store.all('tasks').length);
+  ok('A15 backup contains every collection', backup.app === 'jobhunt-command-center' && backup.collections.jobs.length === 4 && backup.collections.applications.length === 1 && backup.collections.tasks.length === nTasks && 'mailEvents' in backup.collections);
   await page.locator('summary', { hasText: 'Delete all data' }).click();
   await clickText(page, 'Delete all data…');
   await clickText(page, 'Delete everything', '.modal-foot button');
@@ -243,7 +247,7 @@ const clickText = (page, text, sel = 'button') => page.locator(sel, { hasText: t
   await page.waitForSelector('text=Restore backup');
   await clickText(page, 'Restore', '.modal-foot button');
   await page.waitForTimeout(600);
-  ok('A15 restore brings everything back', (await page.evaluate(() => [window.__jobhunt.store.all('jobs').length, window.__jobhunt.store.all('applications').length, window.__jobhunt.store.all('tasks').length].join())) === '4,1,2');
+  ok('A15 restore brings everything back', (await page.evaluate(() => [window.__jobhunt.store.all('jobs').length, window.__jobhunt.store.all('applications').length, window.__jobhunt.store.all('tasks').length].join())) === `4,1,${nTasks}`);
   ok('A15 restored application keeps its history and interview', await page.evaluate(() => { const a = window.__jobhunt.store.all('applications')[0]; return a.interviews.length === 1 && a.history.length >= 3; }));
 
   // CSV export
@@ -252,7 +256,7 @@ const clickText = (page, text, sel = 'button') => page.locator(sel, { hasText: t
   ok('A16 applications CSV exports', readFileSync(csvPath, 'utf8').split('\n')[0].startsWith('Company,Job title,Stage'));
 
   // Every screen renders without errors or overflow
-  for (const r of ['dashboard', 'discover', 'shortlist', 'tracker', 'tasks', 'calendar', 'reports', 'import', 'settings']) {
+  for (const r of ['dashboard', 'discover', 'shortlist', 'tracker', 'tasks', 'calendar', 'reports', 'import', 'settings', 'inbox', 'automation']) {
     await go(page, r);
     const bad = await page.locator('.notice.bad', { hasText: 'This screen hit an error' }).count();
     ok(`A17 desktop ${r} renders (no overflow, no null/undefined text)`, !bad && await noOverflow(page) && await noJunk(page));
@@ -281,7 +285,7 @@ const clickText = (page, text, sel = 'button') => page.locator(sel, { hasText: t
   ok('B1 tab bar visible, rail hidden', await page.locator('.tabbar').isVisible() && !(await page.locator('.rail').isVisible()));
   const tabSizes = await page.$$eval('.tabbar .tab', (els) => els.map((e) => [e.getBoundingClientRect().width, e.getBoundingClientRect().height]));
   ok('B2 tab targets are at least 44×44', tabSizes.every(([w, hh]) => w >= 44 && hh >= 44), JSON.stringify(tabSizes));
-  for (const r of ['dashboard', 'discover', 'shortlist', 'tracker', 'tasks', 'calendar', 'reports', 'import', 'settings']) {
+  for (const r of ['dashboard', 'discover', 'shortlist', 'tracker', 'tasks', 'calendar', 'reports', 'import', 'settings', 'inbox', 'automation']) {
     await go(page, r);
     const of = await noOverflow(page);
     const bad = await page.locator('.notice.bad', { hasText: 'This screen hit an error' }).count();
@@ -323,7 +327,7 @@ const clickText = (page, text, sel = 'button') => page.locator(sel, { hasText: t
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 }, timezoneId: 'Asia/Kolkata' });
   await ctx.addInitScript(() => {
     // Minimal stand-in for claude.use('db'): collections of docs, onSnapshot, set/update/delete with deep-merge update.
-    const data = { jobs: new Map(), jobMeta: new Map(), applications: new Map(), tasks: new Map(), imports: new Map(), settings: new Map() };
+    const data = { jobs: new Map(), jobMeta: new Map(), applications: new Map(), tasks: new Map(), imports: new Map(), mailEvents: new Map(), runs: new Map(), system: new Map(), settings: new Map() };
     const subs = new Map();
     const snap = (c) => { const docs = [...data[c]].map(([id, d]) => ({ id, exists: true, data: () => JSON.parse(JSON.stringify(d)) })); return { docs, size: docs.length, empty: !docs.length, metadata: { fromCache: false, hasPendingWrites: false } }; };
     const emit = (c) => setTimeout(() => (subs.get(c) || []).forEach((fn) => fn(snap(c))), 30);
@@ -348,7 +352,7 @@ const clickText = (page, text, sel = 'button') => page.locator(sel, { hasText: t
   const errs = watchErrors(page);
   await page.goto(base + '/artifact/');
   await page.waitForSelector('.rail');
-  ok('C1 artifact mode shows "Synced with claude.ai"', await page.locator('.rail-foot', { hasText: 'Synced with claude.ai' }).count() === 1);
+  ok('C1 artifact mode shows the live database', await page.locator('.rail-foot', { hasText: 'Database live on claude.ai' }).count() === 1);
   await go(page, 'discover');
   ok('C2 jobs written by the scheduled task appear', await page.locator('.job-card').count() === 2);
   ok('C3 Gmail-confirmed application is offered, not auto-tracked', await page.locator('.job-card', { hasText: 'Applied (not tracked)' }).count() === 1 && (await page.evaluate(() => window.__mockdb.data.applications.size)) === 0);
@@ -393,6 +397,120 @@ const clickText = (page, text, sel = 'button') => page.locator(sel, { hasText: t
   await p2.waitForSelector('text=Sign in to see your job search');
   ok('C10 signed-out view explains where the data is, without faking it', true);
   await c2.close();
+}
+
+// ======================= D. Gmail automation end to end (artifact + connector stand-ins) =======================
+{
+  const ctx = await browser.newContext({ viewport: { width: 1366, height: 900 }, timezoneId: 'Asia/Kolkata' });
+  await ctx.addInitScript(() => {
+    const data = { jobs: new Map(), jobMeta: new Map(), applications: new Map(), tasks: new Map(), imports: new Map(), mailEvents: new Map(), runs: new Map(), system: new Map(), settings: new Map() };
+    const subs = new Map();
+    const snap = (c) => { const docs = [...data[c]].map(([id, d]) => ({ id, exists: true, data: () => JSON.parse(JSON.stringify(d)) })); return { docs, size: docs.length, empty: !docs.length, metadata: { fromCache: false, hasPendingWrites: false } }; };
+    const emit = (c) => setTimeout(() => (subs.get(c) || []).forEach((fn) => fn(snap(c))), 20);
+    const merge = (a, b) => { const o = { ...a }; for (const [k, v] of Object.entries(b)) o[k] = v && typeof v === 'object' && !Array.isArray(v) && o[k] && typeof o[k] === 'object' && !Array.isArray(o[k]) ? merge(o[k], v) : v; return o; };
+    const db = {
+      collection: (c) => ({ onSnapshot: (next) => { if (!subs.has(c)) subs.set(c, []); subs.get(c).push(next); setTimeout(() => next(snap(c)), 40); return () => {}; } }),
+      doc: (path) => { const [c, id] = path.split('/'); return {
+        set: async (d) => { data[c].set(id, JSON.parse(JSON.stringify(d))); emit(c); },
+        update: async (d) => { if (!data[c].has(id)) { const e = new Error('missing'); e.code = 'invalid_argument'; throw e; } data[c].set(id, merge(data[c].get(id), JSON.parse(JSON.stringify(d)))); emit(c); },
+        delete: async () => { data[c].delete(id); emit(c); },
+        acquire: async () => ({ acquired: true }),
+      }; },
+    };
+    const job = (o) => ({ appliedOn: '', category: 'PM', company: 'Acme Pay', ctc: 'Not disclosed', employmentType: 'Full-time', experience: '2–3 yrs', foundOn: new Date().toISOString().slice(0, 10), freshness: '24h', link: 'https://www.linkedin.com/jobs/view/4400000001/', listedAt: '', listedTimeKnown: false, location: 'Bengaluru (Hybrid)', match: 88, note: '', region: 'India', source: 'LinkedIn', status: 'Not applied', statusSource: 'Discovery', title: 'Product Manager – Payments', ...o });
+    data.jobs.set('acme', job({}));
+    data.jobs.set('zeta1', job({ company: 'Zeta', title: 'Product Manager', link: 'https://www.linkedin.com/jobs/view/4400000010/' }));
+    data.jobs.set('zeta2', job({ company: 'Zeta', title: 'Business Analyst', link: 'https://www.linkedin.com/jobs/view/4400000011/' }));
+    // Gmail stand-in: the same shapes the real connector returns.
+    const d = (h) => new Date(Date.now() - h * 3600e3).toISOString();
+    const msgs = [
+      { id: 'g1', threadId: 'T1', date: d(30), sender: 'Acme Pay Recruiting <no-reply@greenhouse.io>', subject: 'Thank you for applying to Acme Pay!', snippet: 'Thank you for applying', labelIds: ['INBOX'], plaintextBody: 'Hi Arsh, thank you for applying for the Product Manager – Payments role at Acme Pay. We have received your application.' },
+      { id: 'g2', threadId: 'T2', date: d(5), sender: 'Priya <priya@acmepay.com>', subject: 'Interview invitation – Product Manager – Payments', snippet: 'We would like to invite you', labelIds: ['INBOX'], plaintextBody: 'We would like to invite you to an interview for the Product Manager – Payments role at Acme Pay on 28 Oct 2026 at 3:30 PM IST.' },
+      { id: 'g3', threadId: 'T3', date: d(4), sender: 'sanjoli.raj@freshersindia.in', subject: 'Congrats Arsh | Your Application is required', snippet: 'WFH Job | Submit your application now! Unsubscribe', labelIds: ['INBOX'], plaintextBody: 'WFH Job. How to Apply: Submit your application now! If you wish to opt out click Unsubscribe.' },
+      { id: 'g4', threadId: 'T4', date: d(3), sender: 'careers@zeta.tech', subject: 'Your application to Zeta', snippet: 'Thank you for your interest', labelIds: ['INBOX'], plaintextBody: 'Thank you for applying to Zeta. We have received your application.' },
+    ];
+    const calls = [];
+    let allowed = false;
+    window.__gmail = { calls, msgs };
+    window.__mockdb = { data, write: (c, id, v) => { data[c].set(id, v); emit(c); } };
+    const mcp = {
+      callTool: async (server, tool, input) => {
+        calls.push({ server, tool, input });
+        allowed = true;
+        if (server !== 'Gmail') throw Object.assign(new Error('x'), { code: 'not_in_manifest' });
+        if (tool === 'search_threads') {
+          const th = {}; for (const m of msgs) (th[m.threadId] = th[m.threadId] || { id: m.threadId, messages: [] }).messages.push({ ...m, plaintextBody: undefined });
+          return { payload: { threads: Object.values(th) } };
+        }
+        if (tool === 'get_thread') return { payload: { id: input.threadId, messages: msgs.filter((m) => m.threadId === input.threadId) } };
+        throw Object.assign(new Error('x'), { code: 'not_in_manifest' });
+      },
+    };
+    const permissions = { state: async () => (allowed ? 'granted' : 'prompt'), request: async () => ({}), manage: async () => {} };
+    window.claude = { use: async (n) => (n === 'db' ? db : n === 'mcp' ? mcp : n === 'permissions' ? permissions : n === 'downloads' ? { save: async () => ({ status: 'saved' }) } : null) };
+  });
+  const page = await ctx.newPage();
+  const errs = watchErrors(page);
+  await page.goto(base + '/artifact/');
+  await page.waitForSelector('.rail');
+  await page.waitForTimeout(1800);
+  ok('D1 nothing is read from Gmail before you connect it', (await page.evaluate(() => window.__gmail.calls.length)) === 0);
+  await go(page, 'inbox');
+  await page.locator('button', { hasText: 'Connect Gmail (read-only)' }).click();
+  await page.waitForTimeout(3500);
+  const calls = await page.evaluate(() => window.__gmail.calls.map((c) => c.server + '.' + c.tool));
+  ok('D2 only read tools are called (search_threads, get_thread)', calls.length > 0 && calls.every((c) => c === 'Gmail.search_threads' || c === 'Gmail.get_thread'), [...new Set(calls)].join(','));
+  const st = await page.evaluate(() => ({ apps: [...window.__mockdb.data.applications.values()], ev: Object.fromEntries([...window.__mockdb.data.mailEvents].map(([k, v]) => [k, v.result && v.result.status])), tasks: [...window.__mockdb.data.tasks.keys()] }));
+  const acme = st.apps.find((a) => a.company === 'Acme Pay');
+  ok('D3 confirmation + interview emails update the right application automatically', acme && acme.stage === 'Interview Scheduled' && acme.jobId === 'acme' && acme.appliedOn, acme && acme.stage);
+  ok('D4 interview date and time recorded from the email', acme && acme.interviews[0] && acme.interviews[0].date === '2026-10-28' && acme.interviews[0].time === '15:30');
+  ok('D5 spam email ignored, no application from it', st.ev.g3 === 'ignored' && st.apps.length === 1);
+  ok('D6 ambiguous email (2 Zeta jobs, no role) flagged for review', st.ev.g4 === 'review');
+  ok('D7 tasks created from confirmed events (follow-up, interview prep)', st.tasks.some((t) => t.startsWith('auto-fu-g1')) && st.tasks.some((t) => t.startsWith('auto-prep-g2')));
+  ok('D8 bodies of processed emails are not kept', await page.evaluate(() => [...window.__mockdb.data.mailEvents.values()].filter((e) => e.result && e.result.status !== 'review').every((e) => !e.excerpt)));
+  ok('D9 last sync time shown only after a real sync', await page.locator('text=Last successful sync').count() >= 1);
+  // Resolve the flagged email from the review queue
+  await page.locator('article', { hasText: 'Your application to Zeta' }).locator('details summary').click();
+  await page.locator('article', { hasText: 'Your application to Zeta' }).locator('input[placeholder="Role"]').fill('Product Manager');
+  await page.locator('article', { hasText: 'Your application to Zeta' }).locator('button', { hasText: 'Create' }).click();
+  await page.waitForTimeout(2500);
+  const zeta = await page.evaluate(() => [...window.__mockdb.data.applications.values()].find((a) => a.company === 'Zeta'));
+  ok('D10 your review decision is applied by the engine', zeta && zeta.stage === 'Applied', zeta && zeta.stage);
+  // Re-sync: nothing duplicated
+  await page.locator('button', { hasText: 'Sync now' }).first().click();
+  await page.waitForTimeout(2500);
+  const again = await page.evaluate(() => ({ apps: window.__mockdb.data.applications.size, tasks: window.__mockdb.data.tasks.size, ev: window.__mockdb.data.mailEvents.size, hist: [...window.__mockdb.data.applications.values()].find((a) => a.company === 'Acme Pay').history.length }));
+  ok('D11 re-syncing the same mail creates no duplicates', again.apps === 2 && again.ev === 4, JSON.stringify(again));
+  // Background (scheduled) Gmail pass writes an email record while the page is open → applied with no click
+  await page.evaluate(() => window.__mockdb.write('mailEvents', 'bg1', { messageId: 'bg1', threadId: 'B1', receivedAt: new Date().toISOString(), from: 'careers@acmepay.com', subject: 'Update on your application', snippet: '', excerpt: 'Thank you for your interest in Acme Pay. Unfortunately, we have decided to move forward with other candidates for the Product Manager – Payments position.', capturedBy: 'scheduled', capturedAt: new Date().toISOString(), hint: { type: 'rejection', company: 'Acme Pay', role: 'Product Manager – Payments', confidence: 0.95 } }));
+  await page.waitForTimeout(2500);
+  ok('D12 an email stored by the scheduled task updates the tracker with no clicks', (await page.evaluate(() => [...window.__mockdb.data.applications.values()].find((a) => a.company === 'Acme Pay').stage)) === 'Rejected');
+  // Scheduled discovery writes a duplicate of an existing job + a run record
+  await page.evaluate(() => {
+    const j = window.__mockdb.data.jobs.get('zeta1');
+    window.__mockdb.write('jobs', 'zeta-pm-dup', { ...j, source: 'Naukri', link: 'https://www.linkedin.com/jobs/view/4400000010/?trk=x' });
+    window.__mockdb.write('runs', 'run_disc1', { kind: 'discovery', by: 'scheduled', startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), ok: true, counts: { found: 12, added: 1, updated: 3 } });
+    window.__mockdb.write('system', 'discovery', { lastRunAt: new Date().toISOString(), lastRunOk: true });
+  });
+  await page.waitForTimeout(2500);
+  ok('D13 a duplicate job from the scheduled search is merged automatically', (await page.evaluate(() => (window.__mockdb.data.jobMeta.get('zeta-pm-dup') || {}).mergedInto)) === 'zeta1');
+  await go(page, 'dashboard');
+  ok('D14 automation health shows the discovery run', await page.locator('.card', { hasText: 'Automation health' }).locator('text=Job discovery').count() === 1 && (await page.locator('.card', { hasText: 'Automation health' }).locator('.pill', { hasText: 'OK' }).count()) >= 2);
+  ok('D15 dashboard counts reflect the stored data', (await page.locator('.kpi', { hasText: 'Rejections' }).locator('.value').textContent()) === '1' && (await page.locator('.kpi', { hasText: 'Applications submitted' }).locator('.value').textContent()) === '2');
+  await page.screenshot({ path: join(shots, 'artifact-command-center.png'), fullPage: true });
+  await go(page, 'tracker');
+  ok('D16 tracker table shows Gmail verification', await page.locator('td .pill', { hasText: 'Confirmed by Gmail' }).count() >= 1);
+  await page.screenshot({ path: join(shots, 'artifact-tracker.png'), fullPage: false });
+  await go(page, 'inbox');
+  await page.screenshot({ path: join(shots, 'artifact-inbox.png'), fullPage: true });
+  // Delete email data keeps applications
+  await page.locator('button', { hasText: 'Delete email data…' }).click();
+  await clickText(page, 'Delete email data', '.modal-foot button');
+  await page.waitForTimeout(1500);
+  const after = await page.evaluate(() => ({ ev: window.__mockdb.data.mailEvents.size, apps: window.__mockdb.data.applications.size }));
+  ok('D17 deleting email data keeps applications', after.ev === 0 && after.apps === 2, JSON.stringify(after));
+  ok('D18 no script errors with Gmail automation', errs.length === 0, errs.slice(0, 3).join(' | '));
+  await ctx.close();
 }
 
 await browser.close();

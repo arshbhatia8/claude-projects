@@ -26,6 +26,7 @@ export class ArtifactDbAdapter {
   set(coll, id, data) { return this.db.doc(`${coll}/${id}`).set(data); }
   update(coll, id, data) { return this.db.doc(`${coll}/${id}`).update(data); }
   delete(coll, id) { return this.db.doc(`${coll}/${id}`).delete(); }
+  acquire(coll, id, ttlMs, holder) { const d = this.db.doc(`${coll}/${id}`); return typeof d.acquire === 'function' ? d.acquire({ holder, ttlMs }) : Promise.resolve({ acquired: true }); }
 }
 
 /** Browser storage (or any {getItem,setItem,removeItem}). Every save is read back to confirm it. */
@@ -113,6 +114,11 @@ export class Store {
       }
       setTimeout(finish, 12000);
     });
+  }
+  /** Short cooperative lease (artifact db); always granted for browser storage. */
+  acquire(coll, id, ttlMs = 30000) {
+    if (!this.holder) this.holder = 'tab-' + Math.random().toString(36).slice(2, 10);
+    return this.adapter.acquire ? this.adapter.acquire(coll, id, ttlMs, this.holder) : Promise.resolve({ acquired: true });
   }
   stop() { for (const u of this.unsubs) try { u(); } catch { /* ignore */ } this.unsubs = []; }
   get ready() { return this.loaded.size === COLLECTIONS.length; }

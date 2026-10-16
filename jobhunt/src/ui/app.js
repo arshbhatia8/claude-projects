@@ -14,23 +14,28 @@ import calendar from './views/calendar.js';
 import reports from './views/reports.js';
 import importView from './views/import.js';
 import settings from './views/settings.js';
+import inbox from './views/inbox.js';
+import automation from './views/automation.js';
+import { startRuntime } from './runtime.js';
 
 const TARGET = typeof __TARGET__ !== 'undefined' ? __TARGET__ : 'pages';
 const BUILD = typeof __BUILD__ !== 'undefined' ? __BUILD__ : 'dev';
 
 const VIEWS = {
-  dashboard: { title: 'Dashboard', icon: 'dashboard', render: dashboard },
+  dashboard: { title: 'Command Center', short: 'Home', icon: 'dashboard', render: dashboard },
+  inbox: { title: 'Gmail Updates', short: 'Gmail', icon: 'mail', render: inbox },
+  automation: { title: 'Automation', icon: 'bolt', render: automation },
   discover: { title: 'Discover Jobs', short: 'Discover', icon: 'discover', render: discover },
   shortlist: { title: 'Shortlist', icon: 'star', render: shortlist },
   tracker: { title: 'Application Tracker', short: 'Tracker', icon: 'tracker', render: tracker },
   tasks: { title: 'Tasks', icon: 'tasks', render: tasks },
   calendar: { title: 'Calendar', icon: 'calendar', render: calendar },
   reports: { title: 'Reports', icon: 'reports', render: reports },
-  import: { title: 'Import Jobs', short: 'Import', icon: 'import', render: importView },
+  import: { title: 'Manual Import', short: 'Import', icon: 'import', render: importView },
   settings: { title: 'Settings', icon: 'settings', render: settings },
 };
-const NAV = [['Overview', ['dashboard']], ['Jobs', ['discover', 'shortlist', 'import']], ['Pipeline', ['tracker', 'tasks', 'calendar']], ['Insights', ['reports', 'settings']]];
-const TABS = ['dashboard', 'discover', 'tracker', 'tasks'];
+const NAV = [['Overview', ['dashboard', 'tracker']], ['Inbox & jobs', ['inbox', 'discover', 'shortlist']], ['Plan', ['tasks', 'calendar']], ['System', ['automation', 'reports', 'settings']]];
+const TABS = ['dashboard', 'tracker', 'discover', 'tasks'];
 
 const ctx = {
   target: TARGET, build: BUILD, store: null, model: null, ui: {}, route: 'dashboard', mode: 'local',
@@ -69,6 +74,9 @@ export async function boot() {
   ctx.model = buildModel(store.state);
   applyTheme();
   root.replaceChildren(shell());
+  ctx.refreshChrome = () => { updateChrome(); if (ctx.route === 'inbox' || ctx.route === 'automation' || ctx.route === 'dashboard') schedule(); };
+  ctx.notify = (c) => { const parts = []; if (c.applied) parts.push(`${c.applied} tracker update${c.applied === 1 ? '' : 's'} from Gmail`); if (c.created) parts.push(`${c.created} new application${c.created === 1 ? '' : 's'}`); if (c.review) parts.push(`${c.review} email${c.review === 1 ? '' : 's'} to review`); if (parts.length) toast(parts.join(' · '), { action: c.review ? { label: 'Review', run: () => ctx.go('inbox') } : null }); };
+  startRuntime(ctx);
   window.addEventListener('hashchange', route);
   route();
   store.on(schedule);
@@ -77,6 +85,18 @@ export async function boot() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) schedule(); });
   setInterval(schedule, 5 * 60 * 1000);
 }
+
+function relTime(iso) {
+  const ms = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(ms)) return '';
+  const m = Math.round(ms / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m} min ago`;
+  const hh = Math.round(m / 60);
+  if (hh < 24) return `${hh} h ago`;
+  return `${Math.round(hh / 24)} d ago`;
+}
+ctx.relTime = relTime;
 
 function blocked() {
   return h('div.boot', h('div.card', icon('shield', 28), h('h2', { style: { margin: 0 } }, 'Sign in to see your job search'),
@@ -141,7 +161,8 @@ function badgeCounts() {
   const overdueOrToday = m.tasks.filter((t) => t.status !== 'Completed' && t.dueDate && t.dueDate <= m.ref).length;
   const fresh = m.jobs.filter((j) => !j.hidden && !j.app && !j.meta.reviewed && !j.meta.notRelevant && !j.meta.shortlisted).length;
   const follow = m.apps.filter((a) => a.followUpDue).length;
-  return { discover: fresh, tasks: overdueOrToday, tracker: follow, shortlist: m.jobs.filter((j) => j.meta.shortlisted && !j.hidden).length };
+  const review = m.mailEvents.filter((e) => e.result && e.result.status === 'review').length;
+  return { discover: fresh, tasks: overdueOrToday, tracker: follow, inbox: review, shortlist: m.jobs.filter((j) => j.meta.shortlisted && !j.hidden).length };
 }
 
 function shell() {
@@ -188,10 +209,13 @@ function updateChrome() {
   const link = (id) => {
     const v = VIEWS[id];
     const n = c[id];
-    return h('a.nav-link', { href: '#' + id, 'aria-current': ctx.route === id ? 'page' : null }, icon(v.icon), v.title, n ? h(`span.count${id === 'tasks' || id === 'tracker' ? '.hot' : ''}`, String(n)) : null);
+    return h('a.nav-link', { href: '#' + id, 'aria-current': ctx.route === id ? 'page' : null }, icon(v.icon), v.title, n ? h(`span.count${id === 'tasks' || id === 'tracker' || id === 'inbox' ? '.hot' : ''}`, String(n)) : null);
   };
+  const gs = ctx.model.system.gmail || {};
+  const g = ctx.gmail || {};
   const sync = ctx.mode === 'cloud'
-    ? h('div', h('span.sync-dot' + (ctx.syncError ? '.off' : '')), ctx.syncError ? 'Sync problem: ' + ctx.syncError : 'Synced with claude.ai')
+    ? h('div.stack.tight', h('div', h('span.sync-dot' + (ctx.syncError ? '.off' : '')), ctx.syncError ? 'Database problem: ' + ctx.syncError : 'Database live on claude.ai'),
+      h('div', h('span.sync-dot' + (g.syncing ? '' : gs.lastAttemptOk === false ? '.off' : gs.lastSyncAt ? '' : '.local')), g.syncing ? 'Gmail: syncing…' : gs.lastSyncAt ? `Gmail synced ${relTime(gs.lastSyncAt)}` : 'Gmail: not synced yet'))
     : h('div', h('span.sync-dot.local'), 'This browser only');
   railEl.replaceChildren(
     h('a.brand', { href: '#dashboard', style: { textDecoration: 'none', color: 'inherit' } }, h('span.brand-mark', icon('bolt', 17)), h('span', h('div.brand-name', 'JobHunt'), h('div.brand-sub', 'Command Center'))),
@@ -200,7 +224,7 @@ function updateChrome() {
   );
   const tab = (id) => {
     const v = VIEWS[id];
-    const n = id === 'tasks' ? c.tasks : id === 'tracker' ? c.tracker : 0;
+    const n = id === 'tasks' ? c.tasks : id === 'tracker' ? c.tracker + c.inbox : 0;
     return h('a.tab', { href: '#' + id, 'aria-current': ctx.route === id ? 'page' : null }, icon(v.icon, 22), v.short || v.title, n ? h('span.badge', String(n)) : null);
   };
   const moreActive = !TABS.includes(ctx.route);
@@ -208,7 +232,7 @@ function updateChrome() {
 }
 
 function openMore() {
-  const ids = ['shortlist', 'calendar', 'import', 'reports', 'settings', 'dashboard'];
+  const ids = ['inbox', 'shortlist', 'calendar', 'automation', 'reports', 'settings'];
   const close = () => wrap.remove();
   const wrap = h('div.more-sheet-wrap', h('div.scrim', { onclick: close }),
     h('div.more-sheet', { role: 'dialog', 'aria-label': 'More sections' }, h('div.grab'),
