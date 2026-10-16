@@ -190,6 +190,19 @@ test('8b. best new matches get one review task each, never twice', async () => {
   assert.equal(store.get('tasks', 'auto-review-acme'), undefined, 'a task you deleted is not recreated');
 });
 
+test('review tasks are capped: never more than 5 open, never more than 5 a day', async () => {
+  const jobs = {};
+  for (let i = 0; i < 30; i++) jobs['j' + i] = taskJob({ title: 'Product Manager', company: 'Co' + i, link: 'https://www.linkedin.com/jobs/view/44000001' + String(i).padStart(2, '0') + '/' });
+  const { store } = await newStore({ jobs });
+  for (let i = 0; i < 6; i++) await run(store);
+  const review = store.all('tasks').filter((t) => t.id.startsWith('auto-review-'));
+  assert.equal(review.length, 5);
+  assert.equal(planAutomation(store.state).ops.length, 0, 'converges: nothing more to do');
+  await A.completeTask(store, review[0].id);
+  await run(store);
+  assert.equal(store.all('tasks').filter((t) => t.id.startsWith('auto-review-')).length, 5, 'still capped at 5 for today');
+});
+
 test('recruiter outreach and marketing never count as an application', async () => {
   const { store } = await newStore(seed({ mailEvents: { r1: ev('r1', { from: 'Neha <neha@talentfirm.in>', subject: 'Exciting opportunity', excerpt: 'Hi Arsh, I came across your profile and have an exciting PM opportunity at a fintech. Are you open to a chat?' }) } }));
   await run(store);

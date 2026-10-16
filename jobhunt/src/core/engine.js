@@ -266,8 +266,13 @@ export function planAutomation(state, { nowIso = now().toISOString(), by = 'page
 
   // ---------- 3. Best new matches → review task ----------
   if (auto.autoTasks && auto.reviewTaskThreshold > 0) {
+    // At most N open review tasks at a time, and at most N new ones per day, so a big batch of jobs never floods your list.
+    const reviewTasks = [...state.tasks].filter(([id]) => id.startsWith('auto-review-'));
+    const open = reviewTasks.filter(([, t]) => t.status !== 'Completed').length;
+    const today = reviewTasks.filter(([, t]) => toDay(t.createdAt) === ref).length;
+    const room = Math.max(0, Math.min(auto.reviewTasksPerRun - open, auto.reviewTasksPerRun - today));
     const fresh = model.jobs.filter((j) => !j.hidden && !j.app && !j.meta.reviewed && !j.meta.notRelevant && !j.meta.autoTaskAt && j.score >= auto.reviewTaskThreshold && j.foundDay && daysBetween(j.foundDay, ref) <= 2)
-      .sort((a, b) => b.score - a.score).slice(0, auto.reviewTasksPerRun);
+      .sort((a, b) => b.score - a.score).slice(0, room);
     for (const j of fresh) {
       addTask('auto-review-' + j.id, { title: `Review new match: ${j.title} at ${j.company}`, company: j.company, jobId: j.id, category: 'Review', priority: j.score >= 90 ? 'High' : 'Medium', dueDate: addDays(ref, 1), dueKind: 'suggested', description: `Match score ${j.score}. Found ${j.foundDay}.`, source: { kind: 'discovery', jobId: j.id } });
       ops.push({ op: 'merge', coll: 'jobMeta', id: j.id, data: { autoTaskAt: nowIso, updatedAt: nowIso } });

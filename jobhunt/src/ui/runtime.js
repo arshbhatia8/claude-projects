@@ -12,6 +12,8 @@ const SYNC_EVERY_MS = 30 * 60 * 1000;
 export function startRuntime(ctx) {
   const g = ctx.gmail = { available: false, state: 'unavailable', syncing: false, lastResult: null, error: '' };
   let mcp = null, perms = null, engineBusy = false, engineAgain = false, timer = null;
+  const recentRuns = [];
+  let pausedUntil = 0;
 
   const call = async (tool, input) => {
     if (!GMAIL_TOOLS.includes(tool)) throw new Error(`Tool ${tool} is not allowed`);
@@ -60,10 +62,19 @@ export function startRuntime(ctx) {
     if (engineBusy) { engineAgain = true; return; }
     clearTimeout(timer);
     timer = setTimeout(async () => {
-      if (!ctx.store.ready) return;
+      if (!ctx.store.ready || Date.now() < pausedUntil) return;
       let plan;
       try { plan = planAutomation(ctx.store.state, { nowIso: now().toISOString() }); } catch (e) { console.error(e); return; }
       if (!plan.ops.length) return;
+      // Circuit breaker: an engine that keeps finding work is a bug, not progress. Pause and say so.
+      const t0 = Date.now();
+      while (recentRuns.length && t0 - recentRuns[0] > 60000) recentRuns.shift();
+      if (recentRuns.length >= 6) {
+        pausedUntil = t0 + 10 * 60000;
+        ctx.store.merge('system', 'engine', { lastOk: false, lastErrors: ['Paused for 10 minutes: the engine kept making changes (more than 6 runs in a minute).'], pausedAt: new Date(t0).toISOString() }).catch(() => {});
+        return;
+      }
+      recentRuns.push(t0);
       engineBusy = true;
       try {
         const r = await runEngine(ctx.store, { by: 'page' });

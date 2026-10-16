@@ -1,86 +1,100 @@
 # JobHunt Command Center
 
-A private, single-user command center for a job search: jobs found by a scheduled Claude search, a searchable job database with match scores, an application tracker (table + Kanban), tasks and follow-ups, a calendar, reports, and backup/restore. Dark theme with orange accents, built for laptop and iPhone.
+A private, single-user job-search system. Jobs arrive from a scheduled search, hiring emails are read from Gmail (read-only), and the application tracker updates itself. Dashboard, tracker (table + Kanban), tasks, calendar and reports all run on one database.
 
-| Copy | URL | Where data lives | Receives the scheduled search automatically? |
-|---|---|---|---|
-| **Main** (use this one) | https://claude.ai/artifact/G6md5QeG6c4BiENgqbqHwt | The artifact's private database on claude.ai: one copy shared by your laptop and iPhone | **Yes.** The *Job Search – Evening* scheduled task writes to the same `jobs` collection |
-| Fallback | https://arshbhatia8.github.io/claude-projects/jobhunt/ | This browser only (localStorage) | No. Import files or restore a backup |
+**Use it at:** https://claude.ai/artifact/G6md5QeG6c4BiENgqbqHwt (sign in to claude.ai; works in the Claude app and Safari on iPhone).
+A browser-only copy without automation is at https://arshbhatia8.github.io/claude-projects/jobhunt/.
 
-The main copy is the existing **PM Job Tracker** artifact, rebuilt in place. Its database (80 jobs at the time of the upgrade) was not touched by the upgrade, and the scheduled task keeps working unchanged.
+## How the automation works
 
-## Free services audit
+```
+JobHunt – Job discovery (scheduled, 9:28 PM IST)      JobHunt – Gmail sync (scheduled, 8:54 AM / 1:54 PM / 6:54 PM IST)
+  public job boards, Indeed/Dice/ZipRecruiter            Gmail connector, read tools only
+  → writes jobs + a run record                           → writes one "mail event" per hiring email + a run record
+                         \                                /
+                          ▼                              ▼
+                 the tracker's database (claude.ai artifact db)
+                          │
+                          ▼
+        Tracker engine (runs inside the page, automatically, whenever new data arrives)
+          • matches each email to an application or job → status, applied date, assessment deadline,
+            interview date/time, history entry with the Gmail message id, tasks
+          • merges certain duplicate jobs; creates up to 5 "review this match" tasks a day
+          • anything uncertain → Gmail Updates → "Needs your review"
+```
 
-| Component | Service | Free for this use? | Limits | Free fallback |
+- **Scheduled tasks run while your browser is closed.** They are Claude scheduled tasks on Anthropic's servers, included in your Claude plan with no extra billing.
+- **Status changes from those emails are applied the next time the page is open on any device.** This happens automatically within seconds; there's nothing to click. The engine is deterministic code inside the page, so there is one set of rules. A scheduled task cannot run that code, which is why it doesn't edit applications itself.
+- **The page also reads Gmail itself when open.** It does this every 30 minutes, only after you press *Connect Gmail* once, and through the same connector with the same two read tools.
+
+### Gmail access
+
+| What | Detail |
+|---|---|
+| Connection | Your existing claude.ai **Gmail connector** (OAuth by Google; claude.ai holds the token, this code never sees it) |
+| Tools the page may call | `search_threads`, `get_thread` only (declared in the artifact; anything else is refused by claude.ai) |
+| Tools the scheduled task uses | `search_threads`, `get_thread`, `get_message` (by its instructions) |
+| Google scope of the connector | Set by Anthropic's connector. Public reports list `gmail.readonly` + `gmail.compose` ([report](https://claudeissues.com/issue/53835-claude-ai-gmail-mcp-connector-requests-insufficient-oauth-scopes-cannot-read-ema)). This project cannot narrow that grant; it only ever calls read tools. |
+| Search | hiring keywords + `after:<last sync − 1 day>`, excluding Promotions, Social, Sent and Chats |
+| Stored per email | sender, date, subject, ≤240-char snippet, what it meant, what was done. A ≤2,000-char excerpt is kept only until processed (or reviewed), then deleted. |
+| Disconnect | Page: Gmail Updates → *Turn off for this page*. Everywhere: claude.ai → Settings → Connectors → Gmail → Disconnect; Google Account → Security → Third-party connections. |
+| Delete email data | Gmail Updates → *Delete email data* (removes all email records and subjects from histories; applications, jobs and tasks stay) |
+
+Why not a separate Google OAuth app with only `gmail.readonly`? Its token would have to be stored by a backend, which means another account (for example Cloudflare). Also, in Google's *Testing* mode the refresh token expires every 7 days, which breaks unattended sync. Publishing such an app needs Google's verification for restricted scopes.
+
+### Status rules (conservative)
+- Stages only move forward (Applied → Assessment → Interview → Offer); a rejection or offer can end any active application.
+- If you changed a post-application stage by hand **after** the email arrived (e.g. Withdrawn), your change wins and the email is only noted.
+- An email about an application that is already Rejected/Withdrawn/Closed/Offer is flagged, not applied.
+- No company, several matching applications, or low confidence (default <60%) → flagged for review.
+- Recruiter outreach, job alerts, newsletters and promotions never count as applications.
+- Every processed email is recorded once (Gmail message id), so re-syncing never duplicates events, history or tasks.
+- Dates (assessment deadlines, interview times) are recorded only when the email states one; a list of options records nothing.
+
+### Tasks created automatically
+Follow-up after a confirmed application (your follow-up rule, default 7 days, marked *suggested*). Assessment (due on the stated deadline, marked *confirmed*). Interview prep and thank-you note (when the date is stated). Reply to an information request. Review the offer. "Review new match" for the best new jobs (≤5 open, ≤5 per day). Open auto tasks close when an application is rejected. Turn this off in Settings → Automation.
+
+## Free-services audit
+
+| Component | Service | Free here? | Limits | Fallback |
 |---|---|---|---|---|
-| Hosting (main) | claude.ai Artifact | Yes, included in the Claude plan already in use. No billing, card or domain | Private to the owner; needs a claude.ai sign-in | GitHub Pages copy |
-| Database | Artifact `db` capability | Yes | 25,000 documents per artifact, 256 KiB per document | Browser localStorage + JSON backups |
-| Job data integration | Existing scheduled task → same `jobs` collection | Yes | Runs on the task's schedule (currently once a day, 9:28 PM IST); its sources are the task's (LinkedIn via Chrome, Indeed/Dice/ZipRecruiter connectors, web) | CSV / JSON / pasted Markdown-table import, manual entry |
-| Scheduled synchronisation | Claude scheduled tasks | Yes | Minimum interval is hourly; a run that needs Chrome is skipped when that device is offline | Manual import |
-| Hosting (fallback) | GitHub Pages (public repo) | Yes | 1 GB site, ~100 GB/month soft bandwidth; static only: no backend, secrets or scheduled jobs | Run locally with `npm start` |
-| UI and charts | Plain JavaScript, hand-written SVG charts; esbuild (MIT) at build time only | Yes | none | none |
-| Fonts | Google Fonts (Geist, Bricolage Grotesque) | Yes | none | System fonts (declared fallbacks) |
+| Hosting + database | claude.ai artifact with `db` | Yes, part of your Claude plan | 25,000 docs, 256 KiB each; private to you | JSON backup; browser-only copy |
+| Job discovery | Claude scheduled task: Indeed/Dice/ZipRecruiter connectors, public Greenhouse/Lever/Ashby job-board APIs, public search results | Yes | Uses your plan's usage; no logins, no browser cookies, skips sites that block automation | Manual import (Automation → Exceptions) |
+| Gmail | claude.ai Gmail connector | Yes | Read tools only by design; scope note above | none needed |
+| Scheduling | Claude scheduled tasks | Yes | Hourly minimum; a failed run is retried at the next slot | Page-side Gmail sync when open |
+| UI | Plain JS, own SVG charts, esbuild (MIT) at build time | Yes | none | none |
 
-No API keys, OAuth secrets or tokens exist anywhere in this project. The build fails if it finds a credential pattern.
+There are no API keys, secrets or billing anywhere. The build refuses to finish if it finds a credential pattern. If a connector or quota fails, the run records the error, the page shows it under Automation, and nothing is charged.
 
-## How data is organised
+## Data
 
 | Collection | Written by | Contents |
 |---|---|---|
-| `jobs` | Scheduled task, imports, “Add job” | Discovery facts: title, company, location, experience, CTC, posting date, discovery date (`foundOn`), link, source, search match %, Gmail-applied status |
-| `jobMeta` | You (the app) | Favourite, shortlist + reason, priority, reviewed / not relevant, notes, verification status, extra sources, change history |
-| `applications` | You | Stage, applied date, resume version, documents, recruiter, referral, interviews, assessments, follow-up date, compensation, notes, next action, timestamped history |
-| `tasks` | You | Title, description, linked job/application, priority, due date/time, status, category, notes, created/completed timestamps |
-| `imports` | Imports | One record per import with counts and errors |
-| `settings/main` | You | Target roles, locations, work modes, experience, skills, match weights, defaults, theme |
+| `jobs` | discovery task, manual import/add | listing facts |
+| `jobMeta` | you / engine | notes, shortlist, flags, merge info, history |
+| `applications` | you / engine | stage, dates, interviews, assessments, history (with Gmail message ids) |
+| `tasks` | you / engine | to-dos; auto tasks have deterministic ids |
+| `mailEvents` | Gmail sync (task or page), engine | one per hiring-related email |
+| `runs`, `system` | tasks, page | automation health, last sync, schedule |
+| `settings` | you | roles, locations, weights, automation options |
 
-The scheduled task only writes `jobs`, so a search run can never overwrite your notes, shortlist, applications or tasks. When you track an application the app sets the job's `status: "Applied", statusSource: "You"`, which the task's prompt already promises never to overwrite.
-
-## Using it
-
-- **New jobs** appear in *Discover Jobs* after each scheduled run (live, no refresh needed if the page is open). The badge counts unreviewed jobs.
-- **Review**: open a job for its details, provenance labels (*from the listing* / *from your scheduled search* / *estimate*), the match-score breakdown, possible duplicates and history. Mark it reviewed, favourite, shortlisted (with a reason), not relevant, or set *Listing status* (Unverified → Verified open / Possibly expired / Closed).
-- **Track**: “Track” creates an application. Stages after *Ready to Apply* require the date you actually applied; opening a link never marks anything applied. Jobs where the search found a Gmail confirmation show *Applied (not tracked)* and are offered (not added) on the dashboard.
-- **Suggestions**: moving to Applied, adding an interview or an assessment offers follow-up / prep / thank-you tasks with checkboxes. Nothing is created unless you confirm.
-- **Import** (Import Jobs): upload or paste CSV, JSON or the Markdown tables from a search notification. You get column matching, a preview with *new / update / already here / repeat in file / possible duplicate / invalid* per row, then a summary. Re-importing is idempotent.
-- **Back up**: Settings → *Back up everything (JSON)*. Restore offers *Merge* (adds missing records; newer wins; histories combined; notes never emptied; nothing deleted) or *Replace* (type REPLACE). *Delete all data* requires typing DELETE. CSV exports exist for jobs, applications, tasks and a weekly summary (Reports).
-
-### Match score
-0–100, the weighted average of the factors a listing has data for: role alignment, required skills, experience fit, location & work mode, compensation, posting freshness, seniority fit, and the scheduled search's own resume-based score. Factors with no data (e.g. salary not disclosed) are left out, not counted as zero. Weights are in Settings. A score is an estimate of relevance, never proof a job is open.
-
-### Freshness labels
-*Newly discovered* (found ≤2 days ago, not reviewed), *Recently verified* (you confirmed it open in the last 7 days), *Unverified* / *Needs verification*, *Possibly expired* (posted >30 days ago and not re-checked; it may still be open), *Deadline in Nd*, *Deadline passed*. Only you can mark a job *Closed*.
-
-### Duplicates
-Same listing URL (LinkedIn/Indeed ids normalised), same requisition ID at the same company, or same company + title + city → treated as the same job (imports update it, never touching your data). Anything less certain, such as a different city, a near-identical title, or a different listing id on the same site, is flagged for review in Discover and never merged automatically. Merging keeps one record, hides the other, keeps its link as an extra source and moves applications and tasks.
+Back up from Settings (JSON); CSV exports for jobs, applications and tasks.
 
 ## Development
 
 ```bash
 cd jobhunt
-npm install        # esbuild only
-npm test           # 31 unit tests (node:test)
-npm run build      # dist/artifact/index.html + dist/pages/ (refuses to build if a check fails)
-npm run e2e        # 79 browser checks in headless Chromium (desktop, iPhone 393×852, artifact-db stand-in)
-npm start          # serves dist/pages at http://localhost:4100
+npm install && npm test      # 49 unit tests
+npm run build                # dist/artifact/index.html + dist/pages/
+npm run e2e                  # 101 browser checks (desktop, iPhone 393 px, artifact + Gmail stand-ins)
 ```
 
-```
-jobhunt/
-  src/core/   util, schema (model + parsers), dedupe, matching, freshness, importer, model, metrics,
-              suggestions, actions (all writes), store (live cache + artifact-db/localStorage adapters), backup
-  src/ui/     app (shell, routing, search), dom, charts, forms, detail (drawers), styles.css
-  src/ui/views/ dashboard, discover, shortlist, tracker, tasks, calendar, reports, import, settings
-  scripts/build.mjs   test/*.test.js   test/e2e/run.mjs
-```
-
-**Publishing:** the artifact is updated by publishing `dist/artifact/index.html` to the artifact URL (declares the `db` and `downloads` capabilities). The fallback copy is the contents of `dist/pages/` committed under `jobhunt/` on the `gh-pages` branch, next to Spendly.
+Key files: `src/core/mail.js` (email classifier), `src/core/engine.js` (status rules), `src/core/automation.js` (Gmail sync, engine runner), `src/ui/runtime.js` (in-page automation).
 
 ## Known limitations
 
-- The main copy needs you to be signed in to claude.ai (Claude app or Safari). Signed out, it shows a notice and stores nothing.
-- The live claude.ai page was not clicked through by an automated browser (that needs your signed-in session). The same build was tested end to end against a stand-in implementing the database API, and the real database was read back after publishing.
-- Safari/WebKit was not available for testing; tests ran in Chromium at iPhone 15 size.
-- The GitHub Pages copy cannot receive the scheduled search: a static site has no database the task can write to. Data there is per-browser, and Safari may clear site data for sites you haven't visited in 7 days. Use the main copy, or back up often.
-- Salary comparison across currencies uses the approximate rates in Settings, which you maintain. Nothing fetches live rates or job pages.
-- The scheduled task stores no description or skills for most jobs, so the *Required skills* factor usually has no data and is left out.
+- Status updates from background-synced emails appear when the page is next opened, not while all your devices are closed (the scheduled task stores the emails and notifies you).
+- The scheduled tasks can technically use every connector attached to them (Drive, Calendar, etc. were attached when they were first created; this organisation doesn't allow changing a task's connectors from here). Their instructions forbid using anything but Gmail (sync) or the job connectors (discovery). To remove the extra connectors, edit the tasks in claude.ai → Scheduled tasks.
+- The previous LinkedIn-in-Chrome search is paused (it used your signed-in browser). Re-enable it in claude.ai if you want it back.
+- Public job sources only: LinkedIn and Naukri listings appear only when they surface in public search results.
+- The live claude.ai page was exercised by you (the engine ran there); automated browser tests used stand-ins for the database and Gmail connector. Safari/WebKit was not available for testing.
