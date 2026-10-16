@@ -14,7 +14,7 @@ test('UPI debit to a merchant (high confidence)', () => {
   assert.equal(tx.type, 'expense');
   assert.equal(tx.amount, 45000);
   assert.equal(tx.paymentMethod, 'UPI');
-  assert.equal(tx.categoryName, 'Food and Dining');
+  assert.equal(tx.categoryName, 'Eating Out');
   assert.equal(tx.accountHint, 'XX1234');
   assert.equal(tx.reference, '628312345678');
   assert.equal(tx.date, '2026-10-10');

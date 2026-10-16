@@ -7,7 +7,8 @@ import { barChart, lineChart, donut, donutLegend, colorAt } from './charts.js';
 import { periodSummary, monthsEnding, monthlySeries, shiftMonth, insights, pnlFor, indexById, reversibleAmount } from '../core/ledger.js';
 import { TX_TYPES, ASSET_TYPES } from '../core/defaults.js';
 import { formatINR, toInputValue } from '../core/money.js';
-import { openTxForm, openTxDetail, openTemplateForm } from './forms.js';
+import { openTxForm, openTxDetail, openTemplateForm, openCategoryEntry } from './forms.js';
+import { smartBar } from './smart-ui.js';
 
 const S = () => app.store;
 
@@ -38,14 +39,20 @@ actions['month-step'] = (el) => {
 const stat = (label, valueHtml, sub = '', ic = '', cls = '') =>
   `<article class="stat"><span class="stat-label">${ic ? icon(ic) : ''}${esc(label)}</span><span class="stat-value ${cls}">${valueHtml}</span>${sub ? `<span class="stat-sub">${sub}</span>` : ''}</article>`;
 
-function categoryBars(rows, total, kind = 'expense') {
+function categoryBars(rows, total, kind = 'expense', month = '') {
   if (!rows.length) return emptyState('pie', kind === 'expense' ? 'No spending recorded' : 'Nothing yet', 'Transactions you add for this period appear here.');
-  return `<div class="bars">${rows.slice(0, 7).map((r, i) => {
+  return `<div class="bars">${rows.slice(0, 8).map((r, i) => {
     const share = total > 0 ? (r.total / total) * 100 : 0;
-    return `<div class="bar-row"><div class="bar-top"><span>${esc(categoryName(r.categoryId) || 'Uncategorised')}</span><span>${money(r.total)} · ${share.toFixed(0)}%</span></div>
-      <div class="bar-track"><div class="bar-fill" style="width:${Math.max(2, Math.min(100, share)).toFixed(1)}%;background:${colorAt(i)}"></div></div></div>`;
+    return `<button class="bar-row bar-link" data-act="filter-cat" data-id="${esc(r.categoryId || '')}" data-month="${esc(month)}" aria-label="${esc(`Show ${categoryName(r.categoryId) || 'Uncategorised'} transactions, ${share.toFixed(0)}% of spending`)}"><span class="bar-top"><span>${esc(categoryName(r.categoryId) || 'Uncategorised')}</span><span>${money(r.total)} · ${share.toFixed(0)}%</span></span>
+      <span class="bar-track"><span class="bar-fill" style="display:block;width:${Math.max(2, Math.min(100, share)).toFixed(1)}%;background:${colorAt(i)}"></span></span></button>`;
   }).join('')}</div>`;
 }
+
+// Category drill-down: every item (Dosa, Idli, …) recorded under it that month.
+actions['filter-cat'] = (el) => {
+  Object.assign(app.state.txFilter, { categoryId: el.dataset.id, type: '', q: '', source: '', account: '', ...(el.dataset.month ? { period: 'month', month: el.dataset.month } : {}) });
+  location.hash = 'transactions';
+};
 
 function allocationItems(totals) {
   const items = Object.entries(totals.byAssetType).filter(([, v]) => v > 0).map(([type, value]) => ({ label: ASSET_TYPES[type]?.label || type, value }));
@@ -123,10 +130,14 @@ export const dashboard = {
         <button class="action-tile" data-act="add-asset">${icon('pie')}Add asset</button>
       </div>
 
-      <section class="section" aria-label="Favourite templates">
-        ${favs.length
-          ? `<div class="quick-strip fav-strip">${favs.map((tp) => `<button class="chip" data-act="tpl-use" data-id="${esc(tp.id)}">${icon(categoryIcon(categoryName(tp.categoryId) || tp.name))}${esc(tp.name)}</button>`).join('')}<a class="chip" href="#quick">${icon('more')}All</a></div>`
-          : `<a class="chip" href="#quick" style="width:100%;justify-content:center">${icon('pin')}Pin everyday buys like Breakfast – Dosa for one-tap entry</a>`}
+      <section class="section">${smartBar()}</section>
+
+      <section class="section" aria-label="Quick Add favourites">
+        <div class="quick-strip fav-strip">
+          ${quickCategories(db, store.today()).slice(0, 6).map(({ c }) => `<button class="chip" data-act="cat-use" data-id="${esc(c.id)}">${icon(categoryIcon(c.name))}${esc(c.name)}</button>`).join('')}
+          ${favs.map((tp) => `<button class="chip" data-act="tpl-use" data-id="${esc(tp.id)}">${icon('pin')}${esc(tp.name)}</button>`).join('')}
+          <a class="chip" href="#quick">${icon('more')}All</a>
+        </div>
       </section>
 
       <div class="stats section">
@@ -147,7 +158,7 @@ export const dashboard = {
         </article>
         <article class="card w-6">
           <div class="section-head"><h2>Expense breakdown</h2><span class="muted small">${esc(monthLabel(month))}</span></div>
-          ${categoryBars(s.expenseByCategory.filter((r) => r.total > 0), s.expenses)}
+          ${categoryBars(s.expenseByCategory.filter((r) => r.total > 0), s.expenses, 'expense', month)}
         </article>
         <article class="card w-6">
           <div class="section-head"><h2>Recent</h2><a class="small" href="#transactions">See all →</a></div>
@@ -340,7 +351,7 @@ actions['tx-export'] = async () => {
   const r = await download(`spendly-transactions-${store.today()}.csv`, transactionsToCsv(store.db, list), 'text/csv');
   if (r !== 'cancelled') toast(`Exported ${list.length} transactions`);
 };
-actions['new-tx'] = () => openTxForm({ values: { date: S().today() } });
+actions['new-tx'] = () => openTxForm({ values: { date: S().today() }, draftKey: 'tx:new' });
 actions['tx-open'] = (el) => openTxDetail(el.dataset.id);
 actions['tx-edit'] = (el) => {
   const tx = S().db.transactions.find((t) => t.id === el.dataset.id);
@@ -397,67 +408,69 @@ function templateTile(tp) {
 
 const grid = (list) => `<div class="tpl-grid">${list.map(templateTile).join('')}</div>`;
 
+/** Quick Add categories, most-used in the last 60 days first. */
+export function quickCategories(db, today) {
+  const since = new Date(Date.parse(today + 'T00:00:00Z') - 60 * 864e5).toISOString().slice(0, 10);
+  const uses = new Map();
+  const last = new Map();
+  for (const t of db.transactions) {
+    if (!t.categoryId || t.type !== 'expense') continue;
+    if (t.date >= since) uses.set(t.categoryId, (uses.get(t.categoryId) || 0) + 1);
+    const prev = last.get(t.categoryId);
+    if (!prev || t.date > prev.date || (t.date === prev.date && t.createdAt > prev.createdAt)) last.set(t.categoryId, t);
+  }
+  return db.categories
+    .filter((c) => c.quick && !c.archived && !c.parentId)
+    .map((c, i) => ({ c, i, n: uses.get(c.id) || 0, last: last.get(c.id) || null }))
+    .sort((a, b) => b.n - a.n || a.i - b.i);
+}
+
+function categoryTile({ c, last }) {
+  const lastText = last ? `Last: ${last.description && last.description.toLowerCase() !== c.name.toLowerCase() ? `${last.description} · ` : ''}${moneyText(last.amount)}` : 'Tap to add';
+  return `<button class="tpl cat-tile" data-act="cat-use" data-id="${esc(c.id)}" aria-label="Add ${esc(c.name)} expense">
+    <span class="tx-ico t-expense">${icon(categoryIcon(c.name))}</span>
+    <span class="tpl-name">${esc(c.name)}</span>
+    <span class="tpl-amt">${esc(lastText)}</span>
+  </button>`;
+}
+
 export const quick = {
   title: 'Quick Add',
   render() {
-    const db = S().db;
+    const store = S();
+    const db = store.db;
     const st = app.state.quick;
-    const all = db.templates;
     const q = st.q.trim().toLowerCase();
-    const usedCats = [...new Set(all.map((t) => t.categoryId).filter(Boolean))];
-    let body;
-    if (!all.length) {
-      body = `<div class="card">${emptyState('zap', 'No templates yet', 'Templates are shortcuts for things you buy often. Tap one, check the amount, save — done in seconds.',
-        `<div class="row" style="justify-content:center"><button class="btn btn-primary" data-act="add-suggested">${icon('spark')}Add suggested templates</button><button class="btn btn-ghost" data-act="new-template">${icon('plus')}Create my own</button></div><p class="tiny muted">Suggested: Breakfast – Dosa, Breakfast – Idli, Lunch, Dinner, Tea / Coffee, Snacks, Groceries, Cab / Auto, Petrol, Shopping. You can edit or remove them.</p>`)}</div>`;
-    } else {
-      const filtered = all.filter((t) => (!st.categoryId || t.categoryId === st.categoryId) && (!q || `${t.name} ${t.description} ${categoryName(t.categoryId)}`.toLowerCase().includes(q)));
-      if (q || st.categoryId) {
-        body = filtered.length ? grid(filtered) : `<div class="card">${emptyState('search', 'No matching templates', 'Try another word, or create a template for it.', `<button class="btn btn-primary btn-sm" data-act="new-template">${icon('plus')}New template</button>`)}</div>`;
-      } else {
-        const pinned = all.filter((t) => t.pinned);
-        const frequent = all.filter((t) => !t.pinned && t.useCount > 0).sort((a, b) => b.useCount - a.useCount).slice(0, 6);
-        const recentTpl = all.filter((t) => t.lastUsedAt).sort((a, b) => (a.lastUsedAt < b.lastUsedAt ? 1 : -1)).slice(0, 6);
-        const byCat = new Map();
-        for (const t of [...all].sort((a, b) => a.name.localeCompare(b.name))) {
-          const key = t.categoryId ? categoryName(t.categoryId) : TX_TYPES[t.type].label;
-          (byCat.get(key) || byCat.set(key, []).get(key)).push(t);
-        }
-        const section = (title, list) => (list.length ? `<section class="section"><h3>${esc(title)}</h3>${grid(list)}</section>` : '');
-        body = `
-          ${section('Pinned favourites', pinned)}
-          ${section('Frequently used', frequent)}
-          ${section('Recently used', recentTpl)}
-          <section class="section"><h3>All templates</h3>
-            ${[...byCat].map(([cat, list]) => {
-              const groups = new Map();
-              for (const t of list) {
-                const g = t.name.includes(' – ') ? t.name.split(' – ')[0] : t.name.includes(' - ') ? t.name.split(' - ')[0] : '';
-                (groups.get(g) || groups.set(g, []).get(g)).push(t);
-              }
-              return `<div class="group-title">${esc(cat)}</div>${[...groups].map(([g, items]) => (g && items.length > 1 ? `<div class="tiny muted" style="margin:2px 4px">${esc(cat)} › ${esc(g)}</div>` : '') + grid(items)).join('')}`;
-            }).join('')}
-          </section>`;
-      }
+    let cats = quickCategories(db, store.today());
+    let templates = [...db.templates].sort((a, b) => Number(b.pinned) - Number(a.pinned) || (b.useCount || 0) - (a.useCount || 0) || a.name.localeCompare(b.name));
+    if (q) {
+      // Search categories, templates and the descriptions you have used ("dosa" finds Breakfast).
+      const descHit = new Set(db.transactions.filter((t) => t.description?.toLowerCase().includes(q)).map((t) => t.categoryId));
+      cats = cats.filter(({ c }) => c.name.toLowerCase().includes(q) || descHit.has(c.id));
+      templates = templates.filter((t) => `${t.name} ${t.description} ${categoryName(t.categoryId)}`.toLowerCase().includes(q));
     }
     const recentTx = sortTx(db.transactions.filter((t) => t.type !== 'reversal')).slice(0, 5);
     return `
       <div class="page-head">
-        <div><h1>Quick Add</h1><p class="muted">Tap, check the amount, save.</p></div>
+        <div><h1>Quick Add</h1><p class="muted">Tap a category, type what it was, save.</p></div>
         <div class="page-actions">
           <button class="btn btn-ghost" data-act="new-template" aria-label="New template">${icon('plus')}<span class="lbl">New template</span></button>
           <button class="btn btn-primary" data-act="new-tx">${icon('edit')}<span class="lbl">Manual</span></button>
         </div>
       </div>
-      ${all.length ? `
-        <div class="section">
-          <div class="searchbar">${icon('search')}<input type="search" id="quick-q" value="${esc(st.q)}" placeholder="Search templates, e.g. Dosa" aria-label="Search templates" /></div>
-          <div class="chips" role="group" aria-label="Filter by category">
-            <button class="chip" data-act="quick-cat" data-id="" aria-pressed="${!st.categoryId}">All</button>
-            ${usedCats.map((id) => `<button class="chip" data-act="quick-cat" data-id="${esc(id)}" aria-pressed="${st.categoryId === id}">${icon(categoryIcon(categoryName(id)))}${esc(categoryName(id))}</button>`).join('')}
-          </div>
-        </div>` : ''}
-      ${body}
-      ${recentTx.length ? `<section class="section"><div class="section-head"><h3>Repeat a recent transaction</h3></div>
+      <section class="section">${smartBar()}</section>
+      <div class="section">
+        <div class="searchbar">${icon('search')}<input type="search" id="quick-q" value="${esc(st.q)}" placeholder="Search, e.g. Breakfast or Dosa" aria-label="Search categories, templates and past items" /></div>
+      </div>
+      <section class="section" aria-label="Categories">
+        <div class="section-head"><h3>Categories</h3><button class="link-btn" data-act="manage-categories">Edit</button></div>
+        ${cats.length ? `<div class="tpl-grid">${cats.map(categoryTile).join('')}</div>` : `<p class="muted small">No category matches “${esc(st.q)}”.</p>`}
+      </section>
+      <section class="section" aria-label="Your templates">
+        <div class="section-head"><h3>Your templates</h3></div>
+        ${templates.length ? grid(templates) : q ? '<p class="muted small">No template matches.</p>' : `<p class="muted small">Optional. Save a fixed entry you repeat — e.g. a fixed-amount “Office lunch” paid by UPI — from any transaction (More details → Save as reusable template), or tap <b>+</b> above.</p>`}
+      </section>
+      ${recentTx.length && !q ? `<section class="section"><div class="section-head"><h3>Repeat a recent transaction</h3></div>
         <ul class="tx-list">${recentTx.map((t) => `<li class="row card-flat"><span class="tx-ico t-${t.type}" style="width:36px;height:36px">${icon(t.categoryId ? categoryIcon(categoryName(t.categoryId)) : TYPE_ICON[t.type])}</span><span style="min-width:0;flex:1"><span class="tx-title" style="display:block">${esc(t.description)}</span><span class="tx-meta" style="display:block">${esc(categoryName(t.categoryId) || TX_TYPES[t.type].label)} · ${esc(relDate(t.date))}</span></span><button class="btn btn-ghost btn-sm" data-act="tx-repeat" data-id="${esc(t.id)}">${icon('refresh')}Repeat</button></li>`).join('')}</ul></section>` : ''}`;
   },
   after(root) {
@@ -470,6 +483,7 @@ export const quick = {
   },
 };
 
+actions['cat-use'] = (el) => openCategoryEntry(el.dataset.id);
 actions['quick-cat'] = (el) => { app.state.quick.categoryId = el.dataset.id; app.render(); };
 actions['new-template'] = () => openTemplateForm();
 actions['tpl-edit'] = (el) => openTemplateForm(S().db.templates.find((t) => t.id === el.dataset.id));
@@ -508,17 +522,15 @@ actions['tpl-use'] = (el) => {
   if (!tp) return;
   openTxForm({
     template: tp,
+    draftKey: `tx:tpl:${tp.id}`,
+    focus: tp.description ? 'amount' : 'description',
     values: {
       type: tp.type, amount: tp.amount, categoryId: tp.categoryId, subcategoryId: tp.subcategoryId, paymentMethod: tp.paymentMethod,
       from: tp.from, to: tp.to, description: tp.description || tp.name, notes: tp.notes, date: S().today(),
     },
   });
 };
-actions['add-suggested'] = async () => {
-  const n = await S().addSuggestedTemplates();
-  toast(n ? `Added ${n} templates — edit or delete any of them` : 'Those templates already exist');
-  app.render();
-};
+
 
 // ---------------------------------------------------------------------------
 // Reports

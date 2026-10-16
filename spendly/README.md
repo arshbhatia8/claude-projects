@@ -7,7 +7,9 @@ It is free to run: no server, no subscription, no install. Spendly runs in your 
 
 - **My Finance dashboard**: liquid balance, income credited, expenses debited, net cash flow, investments, total assets, liabilities and net worth for any month. It also shows charts, insights and recent activity.
 - **Privacy eye**: every amount is hidden (`₹••••••`) until you tap the eye. The eye shows or hides all amounts in the app at once, including chart labels and tooltips.
-- **Quick Add**: reusable templates such as *Breakfast – Dosa*, *Lunch* and *Cab / Auto*. Tap one, check the amount, and save. You can pin, search and filter templates, and see the ones you use most and used last.
+- **Quick Add**: short category tiles — Breakfast, Lunch, Snacks, Dinner, Groceries, Transport, Shopping, Bills, Personal Care, Other Expenses. Tap *Breakfast*, type *Dosa* in Description, enter the amount and tap **Save Expense**. Items like Dosa, Idli or Samosa are always descriptions, never categories, so reports group them under Breakfast or Snacks. Recent descriptions appear as one-tap chips. Optional templates (e.g. a fixed “Office lunch”) can be created, pinned, edited and deleted; that never changes past transactions. Choose which categories appear as tiles in **Edit categories**.
+- **Smart Entry**: type or say a sentence such as “I spent ₹40 on dosa for breakfast today”, “Salary ₹54,000 credited into HDFC”, “I opened an FD with XYZ Bank for ₹50,000 at 6.5% maturing 16 Oct 2027” or “I invested ₹2,000 in stocks”. Spendly fills in the right form (expense, income, FD/RD asset, investment, card or loan) and **nothing is saved until you review and confirm it**. It never invents missing amounts, dates, banks or rates, asks when it is unsure, asks whether to update an FD that already exists, and does not record future payments. You can teach it your own words (e.g. *chai → Snacks*) in Edit categories.
+- **Voice entry** (optional): the microphone uses the browser's built-in speech recognition. It asks for your consent first, listens for one sentence only (20 s limit), and puts the text in the box for you to check. If voice isn't available, use the 🎤 key on the iPhone keyboard instead.
 - **Transactions**: income, expense, transfer, investment, refund and reversal. You can filter, search, sort and export to CSV.
 - **Bank Accounts & Cash, Liabilities**: credit cards and loans, with manual reconciliation.
 - **Assets & Investments**: FDs, RDs, stocks, mutual funds, ETFs, digital gold and other assets. You enter all values yourself; Spendly never fetches live prices.
@@ -62,13 +64,13 @@ Every transaction turns into **balance changes ("postings")** and **income/expen
 - **Net-worth history** comes only from monthly snapshots saved while you use the app. Past months are never estimated.
 - **Templates** are shortcuts, not transactions. Using one creates a separate transaction only after you press Save. Editing or deleting a template never changes past transactions.
 
-## Data model (schema v2)
+## Data model (schema v3)
 
 `settings`, `categories` (income/expense, with subcategories, can be archived), `accounts`, `assets`, `liabilities`, `transactions`, `templates` (with use count and last-used time), `goals`, `snapshots` (reconciliations and valuations), `netWorthHistory`, `gmail` (connection metadata, no tokens), `gmailCandidates` (the review queue).
 
 All money fields are **integer paise**. Each transaction stores its type, amount, date, optional time, description, category and subcategory, `from`/`to` links (account, asset or liability), payment method, notes, source (manual / gmail / demo), external reference, Gmail message id, the template used, and created/updated timestamps.
 
-**Migration**: if a vault from the earlier version of this app (“Ledger”) is found, unlocking it with its old password converts every record to schema v2. The new vault is saved first, and the old one is removed only after that save succeeds. This is covered by tests.
+**Migration**: if a vault from the earlier version of this app (“Ledger”) is found, unlocking it with its old password converts every record to the current schema (v3). Vaults from the previous Spendly version (schema v2) are upgraded in place: default categories get their short names (e.g. *Travel and Transport* → *Transport*), the new Quick Add categories are added, old built-in item templates such as *Breakfast – Dosa* become templates in the Breakfast category, and no transaction is changed. The new vault is saved first, and the old one is removed only after that save succeeds. This is covered by tests.
 
 ---
 
@@ -77,7 +79,7 @@ All money fields are **integer paise**. Each transaction stores its type, amount
 1. Open the app link and **create a password** (8+ characters). If you forget it, the data can't be recovered, so download a backup from Settings now and then.
 2. Add your **bank accounts & cash** with opening balances. Add the last 4 digits so Gmail alerts can be matched to the right account.
 3. Add **credit cards / loans** under Liabilities, and **FDs, RDs, stocks, gold** under Assets. For something you already own, choose *I already own it* so it doesn't take money out of an account.
-4. Go to **Quick Add → Add suggested templates** (Breakfast – Dosa, Lunch, Tea / Coffee…), then pin your favourites.
+4. Use **Quick Add**: tap a category tile, type what it was, enter the amount and save. Or use the Smart Entry box at the top of Home and Quick Add.
 5. To look around first, use **Settings → Load demo data**. It adds clearly marked sample records: ₹65,000 income and ₹25,500 expenses in the current month. **Remove demo data** deletes only those records.
 
 ### Connect Gmail (optional, free, read-only)
@@ -96,9 +98,21 @@ Google will warn that the app "hasn't been verified". That's expected for your o
 ## Using Spendly on iPhone
 
 - Open the link in **Safari** (not a Private tab). The bottom bar has Home, Activity, a big **+** for Quick Add, Assets and **More**, which holds the other six sections.
-- **Quick Add**: tap a favourite on the dashboard or a template tile. The amount box gets focus with the number pad when it needs a value. Use the **Today / Yesterday** chips or pick a date, then tap **Save Expense**. Return on the keyboard only closes it; nothing is saved until you tap Save.
+- **Quick Add**: tap a category tile (or a favourite on Home). Description gets focus; the amount uses the number pad. Use the **Today / Yesterday** chips or pick a date, then tap **Save Expense**. Return on the keyboard only closes it; nothing is saved until you tap Save. Half-typed entries are kept as drafts (for 30 days) and offered again if the page reloads.
 - **Backups and CSVs** open the iOS share sheet. Choose **Save to Files** (or iCloud Drive). To restore, go to Settings → Restore backup, pick the file in Files, and enter the password the backup was made with.
-- **Safari storage rules**: Safari may delete a website's saved data if you don't open it for 7 days, and Private Browsing keeps nothing. A Home Screen shortcut has its own separate storage. Open Spendly at least weekly and keep a recent backup. The dashboard reminds you when your last backup is more than a week old.
+- **Add to Home Screen** (Share → Add to Home Screen) is the best way to use Spendly on iPhone. See *Why data disappeared after 7 days* below. A Home Screen icon has its **own separate storage**, so after adding it, move your data with Settings → Backup in Safari, then Restore in the Home Screen app.
+
+### Why data disappeared after 7 days
+
+Spendly's code has **no expiry, cleanup or auto-delete for financial records** (this is checked by a test). The only things it ever removes are: the old “Ledger” vault after a successful migration, everything after an explicit “Forgot password → type DELETE” reset, and the per-tab session key when you lock or close the tab (the data stays, you just enter the password again).
+
+The 7-day loss comes from **Safari's Intelligent Tracking Prevention**: after 7 days of using Safari without visiting a website, Safari deletes all of that website's script-written storage, including Spendly's encrypted vault. Spendly cannot switch this off. What it does now:
+- asks the browser for **persistent storage** and shows in **Settings → Storage & data safety** whether it was granted (a grant lowers the risk but is not a guarantee);
+- shows the last successful save, the last backup, space used, and whether you opened it from Safari or the Home Screen;
+- checks every save by reading it back, and shows **“Not saved: …”** (keeping your typed form open) if the browser refused or dropped it — it never shows a success message for a failed save;
+- reminds you to back up; it never deletes anything because you haven't backed up.
+
+Best protection: use it from the **Home Screen icon** (Home Screen web apps aren't subject to the 7-day rule while you use them), and keep an encrypted backup in Files/iCloud Drive. Clearing Safari website data or using Private Browsing still removes data.
 
 ## Deployment (GitHub Pages)
 
@@ -110,7 +124,7 @@ To publish an update: run `npm test`, then `npm run build`, then copy `dist/` in
 
 ```bash
 cd spendly
-npm test          # 30 tests: accounting rules, store, migration, Gmail review, parser, duplicates, build checks
+npm test          # 60 tests: accounting, store, migrations, retention, categories, Smart Entry, voice, Gmail review, parser, duplicates, build checks
 npm run build     # produces dist/ for GitHub Pages and runs the publishing checks
 npm start         # serves public/ at http://localhost:4000 (needs Node 20+)
 ```
@@ -119,14 +133,21 @@ The tests cover:
 - each rule in the accounting table above
 - reconciliation, FD maturity and a zero cost basis
 - rollback when a save fails
-- Quick Add template flows
+- Quick Add categories, templates and the v2 → v3 category migration
+- Smart Entry parsing (examples A–F, ambiguity, future payments, duplicates)
+- voice input (feature detection, denied permission, one utterance, time limit)
+- retention: records survive 8, 31 and 400 days unopened; drafts are kept ≥30 days and cleanup touches nothing else; failed or silently dropped saves are never reported as saved
 - Gmail approval idempotency and re-syncs
 - migration from the old format
 - encrypted backups and changing the password
 
-The browser flows were also checked end to end in headless Chromium: privacy masking on every screen, approving and editing Gmail imports, paying a card bill, reversals, FD maturity, templates, reload, lock/unlock, and no horizontal scrolling at 375 px.
+The browser flows were also checked end to end in headless Chromium at the iPhone 15 size (393 px), plus tall, landscape and desktop sizes: privacy masking on every screen, Quick Add categories, Smart Entry (expense, salary, FD, RD, stocks, ambiguous and future sentences), voice with a simulated recognizer (consent, denied permission, unsupported fallback), drafts after reload, a simulated full-storage save failure, backups, CSV, restore, Gmail review, reload, lock/unlock, and no horizontal scrolling.
 
 ## Known limitations
+
+- **Real voice input** was tested only with a simulated speech recognizer, not with a real microphone on an iPhone. Safari's support for the speech API depends on iOS version and Siri & Dictation settings; when it isn't available Spendly says so and you can use the keyboard 🎤 key.
+- **Safari/WebKit itself** was not available in the test environment; tests ran in Chromium with the iPhone 15 screen size.
+- **Old “Food and Dining” transactions** are kept as they were; that category is now called *Eating Out*. Spendly doesn't guess which past meals were breakfast or lunch.
 
 - **Gmail** has been tested with sample alert text, not against your inbox. Bank alert formats vary, so check the suggested category and account before approving. Google sign-in doesn't work inside embedded previews; open the app on its own page.
 - **Data is per browser.** Your phone and laptop each keep their own copy. Use encrypted backup and restore to move data between them.

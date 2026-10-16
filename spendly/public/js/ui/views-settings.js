@@ -2,6 +2,7 @@
 import { app, actions, esc, icon, money, fmtDate, emptyState, toast, ask, sheet, $, $$, refName, categoryName, readForm, submitting, download, IS_IOS } from './dom.js';
 import { possibleDuplicate } from '../core/duplicates.js';
 import { DATE_FORMATS, TX_TYPES } from '../core/defaults.js';
+import { DRAFT_RETENTION_DAYS } from '../core/store.js';
 import * as gmail from '../core/gmail.js';
 import { openTxForm, openCategoryManager } from './forms.js';
 import { transactionsToCsv, assetsToCsv } from './views-main.js';
@@ -82,6 +83,7 @@ export const gmailView = {
         <div class="page-actions">${connected ? `<select id="sync-days" aria-label="Look back" style="width:auto">${[['7', '7 days'], ['30', '30 days'], ['90', '90 days'], ['180', '6 months'], ['365', '1 year']].map(([v, l]) => `<option value="${v}" ${v === app.state.syncDays ? 'selected' : ''}>${l}</option>`).join('')}</select><button class="btn btn-primary" data-act="gm-sync" id="gm-sync">${icon('refresh')}Sync now</button>` : ''}</div>
       </div>
       ${EMBEDDED ? `<div class="notice warn" style="margin-bottom:14px">${icon('alert')}<div>This is an embedded preview. Google sign-in only works when Spendly is opened on its own page (e.g. the GitHub Pages link).</div></div>` : ''}
+      ${window.navigator.standalone === true ? `<div class="notice warn" style="margin-bottom:14px">${icon('alert')}<div>You opened Spendly from the Home Screen. Google's sign-in window can fail inside Home Screen apps on iPhone; if Connect or Sync does not finish, that is the reason. Gmail imports are optional — Smart Entry and Quick Add work everywhere.</div></div>` : ''}
       <article class="card section">
         <div class="section-head"><h2>Connection</h2><span class="badge ${connected ? 'ok' : ''}">${connected ? `${icon('check')}Connected · ${esc(g.email)}` : 'Not connected'}</span></div>
         <div class="notice">${icon('lock')}<div><b>Read-only access.</b> Spendly asks Google only for <code>gmail.readonly</code>, so it cannot delete, send, archive, label or change any email. It never sees your Gmail password. The access token lives in memory for this tab only and is never saved. Only a short excerpt and the sender, subject and date of matching alerts are kept, encrypted with your data.</div></div>
@@ -221,13 +223,15 @@ export const settings = {
       <div class="page-head"><div><h1>Settings</h1><p class="muted">Single-user, encrypted, stays on this device.</p></div></div>
       <div class="grid grid-2">
         <article class="card form span-2" id="data-card">
-          <h2>Data, backup & export</h2>
-          <p class="small muted">Your data lives only in this browser, encrypted. Another phone, browser or a Home Screen shortcut starts empty — move data with a backup. A backup can only be restored with the password it was made with.</p>
-          <div class="card-flat small">
-            <b>Last backup:</b> ${s.lastBackupAt ? esc(new Date(s.lastBackupAt).toLocaleString()) : 'never'}<br>
-            <b>Storage:</b> ${app.state.persisted ? 'marked persistent by the browser' : 'standard (the browser may clear it)'}
-          </div>
-          ${IS_IOS ? `<div class="notice">${icon('alert')}<div><b>On iPhone:</b> Safari can erase a site's saved data if you don't open it for 7 days, and Private Browsing never keeps it. Open Spendly at least weekly and keep a backup in Files or iCloud Drive. Backups and CSVs open the share sheet — choose <b>Save to Files</b>.</div></div>` : ''}
+          <h2>Storage & data safety</h2>
+          <p class="small"><b>Spendly never deletes your records on its own</b> — not after 7 days, 30 days, a closed tab, a lock, or disconnecting Gmail. Only unsaved drafts are tidied up, and only after ${DRAFT_RETENTION_DAYS} days.</p>
+          <dl class="detail-list small" id="storage-status"><dt>Checking…</dt><dd></dd></dl>
+          <details class="card-flat small">
+            <summary><b>What can still remove data, and how to protect it</b></summary>
+            <p class="muted" style="margin-top:8px">Your data is stored encrypted in this browser. Browsers can still remove website data: you can clear it yourself (on iPhone: Settings → Apps → Safari → Clear History and Website Data), Private Browsing keeps nothing, and <b>Safari deletes a website's stored data after 7 days of using Safari without opening that website</b> (Apple's tracking prevention). That rule — not Spendly — is the likely cause of data vanishing after a week. A “persistent storage” grant asks the browser not to clear data automatically, but browsers do not promise it. The dependable protection is an encrypted backup kept in Files or iCloud Drive.</p>
+            ${IS_IOS ? `<p class="muted"><b>iPhone tip:</b> add Spendly to your Home Screen (Share → Add to Home Screen) and open it from there. It then runs as its own app with its own storage, which the 7-day Safari rule does not clear while you keep using it. That app starts empty: tap “Download encrypted backup” here in Safari, then open the Home Screen app and restore the backup there.</p>` : ''}
+          </details>
+          ${IS_IOS ? `<p class="small muted">Backups and CSVs open the share sheet — choose <b>Save to Files</b>.</p>` : ''}
           ${EMBEDDED ? `<div class="notice warn">${icon('alert')}<div>Downloads are blocked in this embedded preview. They work on the GitHub Pages version.</div></div>` : ''}
           <div class="row">
             <button class="btn btn-primary" data-act="backup">${icon('download')}Download encrypted backup</button>
@@ -246,6 +250,7 @@ export const settings = {
           <div class="chips">${['dark', 'light'].map((t) => `<button class="chip" data-act="set-theme" data-theme="${t}" aria-pressed="${s.theme === t}">${icon(t === 'dark' ? 'moon' : 'sun')}${t === 'dark' ? 'Dark' : 'Light'}</button>`).join('')}</div>
           <h2 style="margin-top:8px">Privacy</h2>
           <label class="check"><input type="checkbox" id="set-hide" ${s.hideOnOpen ? 'checked' : ''}/> Hide amounts every time Spendly opens</label>
+          <label class="check"><input type="checkbox" id="set-voice" ${s.voiceConsent ? 'checked' : ''}/> Allow voice entry (uses this device's speech recognition)</label>
           <p class="tiny muted">Use the eye button at the top to show or hide every amount at once. Hiding never changes your data.</p>
           <button class="btn btn-ghost" data-act="toggle-privacy">${icon(s.revealAmounts ? 'eye-off' : 'eye')}${s.revealAmounts ? 'Hide amounts now' : 'Show amounts now'}</button>
         </article>
@@ -280,6 +285,8 @@ export const settings = {
   },
   after(root) {
     const store = S();
+    renderStorageStatus(root);
+    $('#set-voice', root).addEventListener('change', async (e) => { await store.updateSettings({ voiceConsent: e.target.checked }); toast(e.target.checked ? 'Voice entry allowed' : 'Voice entry off'); });
     $('#set-hide', root).addEventListener('change', async (e) => { await store.updateSettings({ hideOnOpen: e.target.checked }); toast('Saved'); });
     $('#set-datefmt', root).addEventListener('change', async (e) => { await store.updateSettings({ dateFormat: e.target.value }); toast('Date format saved'); app.render(); });
     $('#set-tz', root).addEventListener('change', async (e) => { await store.updateSettings({ timezone: e.target.value }); toast('Timezone saved'); app.render(); });
@@ -327,6 +334,38 @@ actions['set-theme'] = async (el) => {
   app.render();
 };
 actions['manage-categories'] = () => openCategoryManager('expense');
+
+const kb = (chars) => (chars < 1024 * 1024 ? `${Math.max(1, Math.round(chars / 1024))} KB` : `${(chars / 1024 / 1024).toFixed(1)} MB`);
+
+async function renderStorageStatus(root) {
+  const el = $('#storage-status', root);
+  if (!el) return;
+  const store = S();
+  const info = store.storageInfo();
+  const supported = Boolean(navigator.storage?.persist);
+  let persisted = false;
+  let estimate = null;
+  try { persisted = supported && (await navigator.storage.persisted()); } catch { /* unsupported */ }
+  try { estimate = navigator.storage?.estimate ? await navigator.storage.estimate() : null; } catch { /* unsupported */ }
+  app.state.persisted = persisted;
+  const standalone = window.navigator.standalone === true || window.matchMedia?.('(display-mode: standalone)').matches;
+  const pctUsed = (info.vaultChars / info.approxLimitChars) * 100;
+  const row = (k, v) => `<dt>${esc(k)}</dt><dd>${v}</dd>`;
+  el.innerHTML = [
+    row('Saved in', 'This browser, encrypted'),
+    row('Last successful save', info.lastSavedAt ? esc(new Date(info.lastSavedAt).toLocaleString()) : 'Not yet'),
+    row('Last backup', store.db.settings.lastBackupAt ? esc(new Date(store.db.settings.lastBackupAt).toLocaleString()) : '<span class="neg">Never — download one below</span>'),
+    row('Persistent storage', !supported ? 'Not supported by this browser' : persisted ? '<span class="pos">Granted</span> (the browser has agreed not to clear it automatically — not a guarantee)' : `Not granted <button class="btn btn-ghost btn-sm" id="ask-persist" type="button">Ask again</button>`),
+    row('Space used', `${kb(info.vaultChars)} of about 5 MB the browser allows (${pctUsed < 1 ? '<1' : pctUsed.toFixed(0)}%)${pctUsed > 70 ? ' <span class="neg">— nearly full: download a backup</span>' : ''}${estimate?.quota ? `<br><span class="muted tiny">Browser estimate: ${kb(estimate.usage || 0)} used of ${kb(estimate.quota)}</span>` : ''}`),
+    row('Opened as', standalone ? 'Home Screen app' : IS_IOS ? 'Safari tab (see the iPhone tip below)' : 'Browser tab'),
+  ].join('');
+  $('#ask-persist', el)?.addEventListener('click', async () => {
+    let ok = false;
+    try { ok = await navigator.storage.persist(); } catch { ok = false; }
+    toast(ok ? 'The browser granted persistent storage' : 'The browser did not grant it — keep backups (and on iPhone, consider the Home Screen app)');
+    renderStorageStatus(root);
+  });
+}
 actions['backup'] = async () => {
   const text = await S().exportBackup();
   const r = await download(`spendly-backup-${S().today()}.json`, text, 'application/json');

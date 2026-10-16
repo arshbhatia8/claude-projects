@@ -33,7 +33,7 @@ test('money is exact integer paise', () => {
 test('income raises and expense lowers the linked account', async () => {
   const { store, bank } = await setupBook();
   await store.createTransaction({ type: 'income', amount: '65000', date: '2026-10-01', categoryId: cat(store, 'income', 'Salary'), to: acc(bank.id) });
-  await store.createTransaction({ type: 'expense', amount: '60', date: '2026-10-02', categoryId: cat(store, 'expense', 'Food and Dining'), from: acc(bank.id) });
+  await store.createTransaction({ type: 'expense', amount: '60', date: '2026-10-02', categoryId: cat(store, 'expense', 'Breakfast'), from: acc(bank.id) });
   assert.equal(bal(store, bank.id), (100000 + 65000 - 60) * 100);
   const s = periodSummary(store.db, '2026-10');
   assert.equal(s.income, 6500000);
@@ -99,7 +99,7 @@ test('refunds and reversals net out correctly', async () => {
 
 test('editing and deleting transactions update totals', async () => {
   const { store, bank } = await setupBook();
-  const food = cat(store, 'expense', 'Food and Dining');
+  const food = cat(store, 'expense', 'Breakfast');
   const { transaction } = await store.createTransaction({ type: 'expense', amount: '500', date: '2026-10-10', categoryId: food, from: acc(bank.id) });
   await store.updateTransaction(transaction.id, { ...transaction, amount: '750' });
   assert.equal(bal(store, bank.id), 10000000 - 75000);
@@ -110,7 +110,7 @@ test('editing and deleting transactions update totals', async () => {
 
 test('manual reconciliation is respected and later postings add on top', async () => {
   const { store, bank } = await setupBook();
-  const food = cat(store, 'expense', 'Food and Dining');
+  const food = cat(store, 'expense', 'Breakfast');
   await store.createTransaction({ type: 'expense', amount: '100', date: '2026-10-05', categoryId: food, from: acc(bank.id) });
   await store.recordSnapshot('account', bank.id, { date: '2026-10-10', value: '90000', note: 'Bank app balance' });
   assert.equal(bal(store, bank.id), 9000000);
@@ -170,7 +170,7 @@ test('net worth = assets − liabilities, liquid excludes investments', async ()
 
 test('validation rejects bad input', async () => {
   const { store, bank } = await setupBook();
-  const food = cat(store, 'expense', 'Food and Dining');
+  const food = cat(store, 'expense', 'Breakfast');
   await assert.rejects(store.createTransaction({ type: 'expense', amount: '0', date: '2026-10-10', categoryId: food }), /more than ₹0/);
   await assert.rejects(store.createTransaction({ type: 'expense', amount: '10', date: '2026-02-30', categoryId: food }), /valid date/);
   await assert.rejects(store.createTransaction({ type: 'expense', amount: '10', date: '2026-10-10', categoryId: cat(store, 'income', 'Salary') }), /category/);
@@ -182,9 +182,9 @@ test('validation rejects bad input', async () => {
 test('a failed save rolls back the change', async () => {
   const storage = (await import('./helpers.js')).memoryStorage();
   const { store } = await freshStore({ storage });
-  const food = cat(store, 'expense', 'Food and Dining');
+  const food = cat(store, 'expense', 'Breakfast');
   storage.setItem = () => { throw new Error('QuotaExceededError'); };
-  await assert.rejects(store.createTransaction({ type: 'expense', amount: '10', date: '2026-10-10', categoryId: food }), /Quota/);
+  await assert.rejects(store.createTransaction({ type: 'expense', amount: '10', date: '2026-10-10', categoryId: food }), /run out of storage/);
   assert.equal(store.db.transactions.length, 0);
 });
 

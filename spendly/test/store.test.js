@@ -6,7 +6,7 @@ import { periodSummary } from '../public/js/core/ledger.js';
 
 test('vault is encrypted and needs the password', async () => {
   const { store, storage } = await freshStore();
-  await store.createTransaction({ type: 'expense', amount: '60', date: '2026-10-15', description: 'Masala dosa', categoryId: cat(store, 'expense', 'Food and Dining') });
+  await store.createTransaction({ type: 'expense', amount: '60', date: '2026-10-15', description: 'Masala dosa', categoryId: cat(store, 'expense', 'Breakfast') });
   assert.ok(!storage.getItem(VAULT_KEY).includes('dosa'));
   store.lock();
   const again = createStore({ storage, session: memoryStorage(), now: () => NOW });
@@ -19,7 +19,7 @@ test('vault is encrypted and needs the password', async () => {
 
 test('templates: create, use repeatedly, pin, edit and delete without touching transactions', async () => {
   const { store } = await freshStore();
-  const food = cat(store, 'expense', 'Food and Dining');
+  const food = cat(store, 'expense', 'Breakfast');
   const bank = await store.saveAccount({ name: 'HDFC', type: 'savings', openingBalance: '1000' });
   const tpl = await store.saveTemplate({ name: 'Breakfast – Dosa', type: 'expense', amount: '60', categoryId: food, from: acc(bank.id), paymentMethod: 'UPI' });
   // Creating a template alone posts nothing.
@@ -45,14 +45,13 @@ test('templates: create, use repeatedly, pin, edit and delete without touching t
 
 test('save-as-template does not create duplicates', async () => {
   const { store } = await freshStore();
-  const food = cat(store, 'expense', 'Food and Dining');
+  const food = cat(store, 'expense', 'Breakfast');
   const a = await store.createTransaction({ type: 'expense', amount: '20', date: '2026-10-15', categoryId: food, description: 'Chai' }, { saveAsTemplate: { name: 'Tea / Coffee' } });
   assert.ok(a.template);
   const b = await store.createTransaction({ type: 'expense', amount: '25', date: '2026-10-15', categoryId: food, description: 'Chai' }, { saveAsTemplate: { name: 'Tea / coffee' } });
   assert.equal(b.template, null);
   assert.equal(b.templateExists, true);
   assert.equal(store.db.templates.length, 1);
-  assert.equal(await store.addSuggestedTemplates(), 10); // Tea / Coffee already exists
 });
 
 test('gmail candidates stay pending, approve exactly once, and resync does not duplicate', async () => {
@@ -60,7 +59,7 @@ test('gmail candidates stay pending, approve exactly once, and resync does not d
   const bank = await store.saveAccount({ name: 'HDFC', type: 'savings', identifier: '1234', openingBalance: '1000' });
   const item = {
     messageId: 'm1', emailDate: '2026-10-14', sender: 'alerts@hdfcbank.net', subject: 'UPI txn', excerpt: 'Rs.450 debited',
-    parsed: { type: 'expense', amount: 45000, date: '2026-10-14', description: 'swiggy@icici', categoryName: 'Food and Dining', paymentMethod: 'UPI', accountHint: 'XX1234', reference: '987654321012', confidence: 'high' },
+    parsed: { type: 'expense', amount: 45000, date: '2026-10-14', description: 'swiggy@icici', categoryName: 'Breakfast', paymentMethod: 'UPI', accountHint: 'XX1234', reference: '987654321012', confidence: 'high' },
   };
   assert.equal(await store.addGmailCandidates([item], { scanned: 1 }), 1);
   assert.equal(store.db.transactions.length, 0); // nothing posted before approval
@@ -130,12 +129,12 @@ test('migrates an old Ledger (v1) vault without losing records', async () => {
   assert.deepEqual(await store.status(), { setUp: true, signedIn: false });
   await store.unlock('old-password');
   const db = store.db;
-  assert.equal(db.schema, 2);
+  assert.equal(db.schema, 3);
   assert.equal(db.transactions.length, 4);
   assert.deepEqual(db.transactions.map((t) => t.type), ['income', 'expense', 'investment', 'expense']);
   assert.equal(db.transactions[1].amount, 45050);
   assert.equal(db.transactions[1].gmailMessageId, 'g1');
-  assert.equal(db.categories.find((c) => c.id === db.transactions[1].categoryId).name, 'Food and Dining');
+  assert.equal(db.categories.find((c) => c.id === db.transactions[1].categoryId).name, 'Eating Out');
   assert.equal(db.categories.find((c) => c.id === db.transactions[3].categoryId).name, 'Pet care');
   assert.equal(db.assets[0].name, 'Parag Parikh Flexi Cap');
   assert.equal(db.assets[0].type, 'mutual_fund');

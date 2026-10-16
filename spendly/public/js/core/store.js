@@ -12,13 +12,16 @@
 //   queued one at a time, so a double-tap cannot post the same thing twice.
 
 import {
-  defaultCategories, buildDemoData, SUGGESTED_TEMPLATES, ACCOUNT_TYPES, ASSET_TYPES, ASSET_STATUS,
+  defaultCategories, buildDemoData, EXPENSE_CATEGORY_DEFS, V2_CATEGORY_RENAMES, V2_SUGGESTED_TEMPLATES, ACCOUNT_TYPES, ASSET_TYPES, ASSET_STATUS,
   LIABILITY_TYPES, GOAL_KINDS, PAYMENT_METHODS, TX_TYPES, DATE_FORMATS,
 } from './defaults.js';
 import { parseAmount, MAX_PAISE, formatINR } from './money.js';
 import { computeTotals, reversibleAmount } from './ledger.js';
 
-export const SCHEMA = 2;
+export const SCHEMA = 3;
+export const META_KEY = 'spendly.meta'; // non-sensitive timestamps only (last successful save)
+/** Unsaved form drafts are kept for at least this long. Nothing else in Spendly ever expires. */
+export const DRAFT_RETENTION_DAYS = 30;
 export const VAULT_KEY = 'spendly.vault';
 export const LEGACY_VAULT_KEY = 'ledger.vault.v1';
 const SESSION_KEY = 'spendly.session';
@@ -98,6 +101,8 @@ export function emptyDb(now = new Date()) {
       dateFormat: 'DD MMM YYYY',
       timezone: 'Asia/Kolkata',
       lastBackupAt: null,
+      voiceConsent: false,
+      smartRules: [], // [{ keyword, categoryId }] — your own Smart Entry word → category mappings
     },
     categories: defaultCategories(),
     accounts: [],
@@ -110,13 +115,14 @@ export function emptyDb(now = new Date()) {
     netWorthHistory: [],
     gmail: { clientId: '', email: null, filter: '', lastSyncAt: null, lastSuccessAt: null, lastResult: null, lastError: null, processedIds: [] },
     gmailCandidates: [],
+    drafts: [], // [{ key, data, updatedAt }] — unsaved form input, see DRAFT_RETENTION_DAYS
   };
 }
 
 const V1_CATEGORY_MAP = {
-  'Food & Dining': 'Food and Dining', Transport: 'Travel and Transport', Fuel: 'Travel and Transport', Travel: 'Travel and Transport',
-  Rent: 'Rent and Electricity', 'Bills & Utilities': 'Rent and Electricity', 'Mobile & Internet': 'Subscriptions',
-  Health: 'Personal Expenses', 'Personal Care': 'Personal Expenses', Entertainment: 'Personal Expenses', 'Gifts & Donations': 'Personal Expenses',
+  'Food & Dining': 'Eating Out', Transport: 'Transport', Fuel: 'Transport', Travel: 'Transport',
+  Rent: 'Rent', 'Bills & Utilities': 'Bills', 'Mobile & Internet': 'Bills',
+  Health: 'Health', 'Personal Care': 'Personal Care', Entertainment: 'Other Expenses', 'Gifts & Donations': 'Other Expenses',
   'EMI / Loan': 'Other Expenses', Insurance: 'Other Expenses', Taxes: 'Other Expenses', 'Transfer Out': 'Other Expenses',
   Freelance: 'Freelance Income', Business: 'Business Income', Interest: 'Interest Income', Dividend: 'Dividends', Refund: 'Refunds',
   Cashback: 'Other Income', Gift: 'Other Income', 'Rental Income': 'Other Income', 'Investment Return': 'Other Income', 'Transfer In': 'Other Income',
@@ -174,15 +180,69 @@ function migrateV1(old, now) {
   return db;
 }
 
+/**
+ * v2 → v3: short category names and category-based Quick Add.
+ *  • Default categories are renamed in place (same ids, so every past
+ *    transaction keeps its category) unless you had already renamed them.
+ *  • New categories (Breakfast, Lunch, Snacks, Dinner, Bills, …) are added.
+ *  • Old "suggested" item templates such as "Breakfast – Dosa" become
+ *    category + description shortcuts; ones you never used or edited are removed.
+ *  • Transactions, accounts, assets, liabilities and goals are not modified.
+ */
+function migrateV2(db) {
+  const used = new Set([...db.transactions, ...db.templates].flatMap((t) => [t.categoryId, t.subcategoryId]).filter(Boolean));
+  const topExpense = () => db.categories.filter((c) => c.kind === 'expense' && !c.parentId);
+  for (const [id, [oldName, newName]] of Object.entries(V2_CATEGORY_RENAMES)) {
+    const c = db.categories.find((x) => x.id === id);
+    if (!c) continue;
+    const clash = topExpense().some((x) => x !== c && x.name.toLowerCase() === newName.toLowerCase());
+    if (c.name === oldName && !clash) c.name = newName;
+    if ((id === 'cat_ex_credit_card_purchases' || id === 'cat_ex_personal_expenses') && !used.has(id)) c.archived = true;
+  }
+  for (const def of EXPENSE_CATEGORY_DEFS) {
+    let c = db.categories.find((x) => x.id === def.id) || topExpense().find((x) => x.name.toLowerCase() === def.name.toLowerCase());
+    if (!c) {
+      c = { id: def.id, kind: 'expense', name: def.name, parentId: null, archived: false };
+      db.categories.push(c);
+    }
+    if (c.quick === undefined) c.quick = def.quick;
+  }
+  for (const c of db.categories) if (c.quick === undefined) c.quick = false;
+  // Show the main everyday categories first everywhere categories are listed.
+  const rank = (c) => {
+    const i = EXPENSE_CATEGORY_DEFS.findIndex((d) => d.id === c.id);
+    return c.kind === 'income' ? -1 : i === -1 ? 999 : i;
+  };
+  db.categories = db.categories.map((c, i) => ({ c, i })).sort((a, b) => rank(a.c) - rank(b.c) || a.i - b.i).map((x) => x.c);
+
+  const oldCategory = { Groceries: 'cat_ex_groceries', 'Cab / Auto': 'cat_ex_travel_and_transport', Petrol: 'cat_ex_travel_and_transport', Shopping: 'cat_ex_shopping' };
+  db.templates = db.templates.filter((t) => {
+    const conv = V2_SUGGESTED_TEMPLATES[t.name];
+    if (!conv || t.type !== 'expense' || t.categoryId !== (oldCategory[t.name] || 'cat_ex_food_and_dining')) return true;
+    if (!(t.useCount > 0) && t.createdAt === t.updatedAt) return false; // offered by the app, never used: drop
+    const autoDescription = t.name.replace(' – ', ' · ');
+    t.categoryId = conv.category;
+    t.subcategoryId = null;
+    if (!t.description || t.description === autoDescription || t.description === t.name) t.description = conv.description;
+    const taken = db.templates.some((o) => o !== t && o.name.toLowerCase() === conv.name.toLowerCase());
+    if (!taken) t.name = conv.name;
+    return true;
+  });
+  db.schema = 3;
+  return db;
+}
+
 export function migrate(raw, now = new Date()) {
   if (!raw || typeof raw !== 'object') throw new Error('Unreadable data');
   let db = raw;
   if (!db.schema) db = migrateV1(db, now);
+  if (db.schema === 2) db = migrateV2(db);
   if (db.schema > SCHEMA) throw new Error('This data was saved by a newer version of Spendly. Reload the page to update.');
   // Fill in anything a future field addition needs, without touching existing data.
   const fresh = emptyDb(now);
   for (const key of Object.keys(fresh)) if (db[key] === undefined) db[key] = fresh[key];
   db.settings = { ...fresh.settings, ...db.settings };
+  if (!Array.isArray(db.settings.smartRules)) db.settings.smartRules = [];
   db.gmail = { ...fresh.gmail, ...db.gmail };
   db.schema = SCHEMA;
   return db;
@@ -251,9 +311,24 @@ export function createStore({ storage = globalThis.localStorage, session = globa
   const safeGet = (k) => { try { return storage.getItem(k); } catch { return null; } };
   const readVault = (k = VAULT_KEY) => { try { return JSON.parse(safeGet(k)); } catch { return null; } };
 
+  let lastSavedAt = (() => { try { return JSON.parse(storage.getItem(META_KEY))?.lastSavedAt || null; } catch { return null; } })();
+  let vaultChars = 0;
+
   async function persist() {
-    const vault = await encryptJson(key, salt, db);
-    storage.setItem(VAULT_KEY, JSON.stringify(vault)); // throws on quota errors → caller rolls back
+    const payload = JSON.stringify(await encryptJson(key, salt, db));
+    try {
+      storage.setItem(VAULT_KEY, payload);
+    } catch (err) {
+      const full = /quota/i.test(`${err?.name} ${err?.message}`);
+      throw new Error(full
+        ? 'Not saved: this browser has run out of storage for Spendly. Download a backup, then free up space.'
+        : `Not saved: the browser refused to store your data (${err?.message || err}).`);
+    }
+    // Read it back: never report a save the browser did not actually keep.
+    if (storage.getItem(VAULT_KEY) !== payload) throw new Error('Not saved: the browser did not keep your data. Your last saved copy is unchanged.');
+    vaultChars = payload.length;
+    lastSavedAt = nowIso();
+    try { storage.setItem(META_KEY, JSON.stringify({ lastSavedAt })); } catch { /* timestamp only */ }
   }
 
   async function rememberSession() {
@@ -293,17 +368,17 @@ export function createStore({ storage = globalThis.localStorage, session = globa
   }
 
   /** Apply a change atomically: validate + mutate a copy, save, or roll back. */
-  function mutate(fn) {
+  function mutate(fn, { quiet = false } = {}) {
     const run = async () => {
       requireUnlocked();
       const before = db;
       const draft = structuredClone(db);
       try {
         const result = fn(draft);
-        recordNetWorth(draft);
+        if (!quiet) recordNetWorth(draft);
         db = draft;
         await persist();
-        listeners.forEach((l) => l());
+        if (!quiet) listeners.forEach((l) => l());
         return result;
       } catch (err) {
         db = before;
@@ -369,6 +444,7 @@ export function createStore({ storage = globalThis.localStorage, session = globa
       if (legacy) storage.removeItem(LEGACY_VAULT_KEY); // … then retire the old vault
     }
     await rememberSession();
+    await purgeExpiredDrafts().catch(() => 0); // a cleanup failure must never block unlocking
   }
 
   function lock() {
@@ -637,28 +713,9 @@ export function createStore({ storage = globalThis.localStorage, session = globa
     });
   }
 
-  function addSuggestedTemplates() {
-    return mutate((d) => {
-      let added = 0;
-      const stamp = nowIso();
-      for (const s of SUGGESTED_TEMPLATES) {
-        if (d.templates.some((t) => normName(t.name) === normName(s.name))) continue;
-        const cat = d.categories.find((c) => c.kind === 'expense' && !c.parentId && c.name === s.category);
-        if (!cat) continue;
-        d.templates.push({
-          id: newId('tpl'), name: s.name, type: 'expense', amount: s.amount, description: s.name.replace(' – ', ' · '), notes: '',
-          paymentMethod: '', categoryId: cat.id, subcategoryId: null, from: null, to: null, pinned: Boolean(s.pinned),
-          useCount: 0, lastUsedAt: null, createdAt: stamp, updatedAt: stamp,
-        });
-        added++;
-      }
-      return added;
-    });
-  }
-
   // ---------- categories ----------
 
-  function addCategory({ kind, name, parentId = null }) {
+  function addCategory({ kind, name, parentId = null, quick = false }) {
     return mutate((d) => {
       if (!['income', 'expense'].includes(kind)) throw new ValidationError('Choose income or expense', 'kind');
       const n = clip(name, 60);
@@ -667,7 +724,7 @@ export function createStore({ storage = globalThis.localStorage, session = globa
       if (d.categories.some((c) => c.kind === kind && (c.parentId || null) === (parentId || null) && normName(c.name) === normName(n))) {
         throw new ValidationError(`“${n}” already exists`, 'name');
       }
-      const c = { id: newId('cat'), kind, name: n, parentId: parentId || null, archived: false };
+      const c = { id: newId('cat'), kind, name: n, parentId: parentId || null, archived: false, quick: Boolean(quick) && kind === 'expense' && !parentId };
       d.categories.push(c);
       return c;
     });
@@ -948,6 +1005,7 @@ export function createStore({ storage = globalThis.localStorage, session = globa
         s.theme = patch.theme;
       }
       if ('hideOnOpen' in patch) s.hideOnOpen = Boolean(patch.hideOnOpen);
+      if ('voiceConsent' in patch) s.voiceConsent = Boolean(patch.voiceConsent);
       if ('revealAmounts' in patch) s.revealAmounts = Boolean(patch.revealAmounts);
       if ('dateFormat' in patch) {
         if (!DATE_FORMATS[patch.dateFormat]) throw new ValidationError('Choose a date format');
@@ -958,6 +1016,85 @@ export function createStore({ storage = globalThis.localStorage, session = globa
         s.timezone = patch.timezone;
       }
       return { ...s };
+    });
+  }
+
+  // ---------- drafts (the only data with an expiry) ----------
+
+  const DRAFT_MS = DRAFT_RETENTION_DAYS * 864e5;
+
+  /** Keep unsaved form input so a reload or a failed save does not lose it. */
+  function saveDraft(draftKey, data) {
+    const json = JSON.stringify(data ?? null);
+    if (json.length > 20000) return Promise.resolve(false);
+    return mutate((d) => {
+      d.drafts = d.drafts.filter((x) => x.key !== draftKey);
+      d.drafts.push({ key: String(draftKey).slice(0, 60), data: JSON.parse(json), updatedAt: nowIso() });
+      return true;
+    }, { quiet: true });
+  }
+
+  function getDraft(draftKey) {
+    requireUnlocked();
+    const found = db.drafts.find((x) => x.key === draftKey);
+    return found ? structuredClone(found) : null;
+  }
+
+  function discardDraft(draftKey) {
+    if (!db || !db.drafts.some((x) => x.key === draftKey)) return Promise.resolve(false);
+    return mutate((d) => {
+      d.drafts = d.drafts.filter((x) => x.key !== draftKey);
+      return true;
+    }, { quiet: true });
+  }
+
+  /**
+   * Remove drafts untouched for more than DRAFT_RETENTION_DAYS. This only ever
+   * filters the drafts list — transactions, accounts, assets, liabilities,
+   * goals, categories, templates and valuations are never part of cleanup.
+   */
+  function purgeExpiredDrafts() {
+    if (!db) return Promise.resolve(0);
+    const cutoff = now().getTime() - DRAFT_MS;
+    const expired = db.drafts.filter((x) => Date.parse(x.updatedAt) < cutoff).length;
+    if (!expired) return Promise.resolve(0);
+    return mutate((d) => {
+      d.drafts = d.drafts.filter((x) => !(Date.parse(x.updatedAt) < cutoff));
+      return expired;
+    }, { quiet: true });
+  }
+
+  function storageInfo() {
+    return { lastSavedAt, vaultChars: vaultChars || (safeGet(VAULT_KEY) || '').length, approxLimitChars: 5 * 1024 * 1024 };
+  }
+
+  // ---------- categories in Quick Add & Smart Entry rules ----------
+
+  function setCategoryQuick(id, quick) {
+    return mutate((d) => {
+      const c = findIn(d, 'categories', id);
+      if (!c || c.parentId) throw new ValidationError('Category not found');
+      c.quick = Boolean(quick);
+      return c;
+    });
+  }
+
+  function saveSmartRule({ keyword, categoryId }) {
+    return mutate((d) => {
+      const k = clip(keyword, 40).toLowerCase();
+      if (k.length < 2) throw new ValidationError('Enter a word of at least 2 letters', 'keyword');
+      const c = d.categories.find((x) => x.id === categoryId && !x.parentId && !x.archived);
+      if (!c) throw new ValidationError('Choose a category', 'categoryId');
+      d.settings.smartRules = d.settings.smartRules.filter((r) => r.keyword !== k);
+      d.settings.smartRules.push({ keyword: k, categoryId: c.id });
+      return d.settings.smartRules;
+    });
+  }
+
+  function deleteSmartRule(keyword) {
+    return mutate((d) => {
+      d.settings.smartRules = d.settings.smartRules.filter((r) => r.keyword !== keyword);
+      return true;
     });
   }
 
@@ -1207,7 +1344,8 @@ export function createStore({ storage = globalThis.localStorage, session = globa
     today, totals: () => computeTotals(db), onChange: (fn) => (listeners.add(fn), () => listeners.delete(fn)),
     // transactions & templates
     createTransaction, updateTransaction, deleteTransaction, normalizeTx: (input) => normalizeTx(db, input),
-    saveTemplate, setTemplatePinned, deleteTemplate, addSuggestedTemplates,
+    saveTemplate, setTemplatePinned, deleteTemplate,
+    saveDraft, getDraft, discardDraft, purgeExpiredDrafts, storageInfo, setCategoryQuick, saveSmartRule, deleteSmartRule,
     // categories
     addCategory, renameCategory, setCategoryArchived,
     // accounts / assets / liabilities / goals
